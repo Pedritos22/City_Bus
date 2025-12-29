@@ -1,1 +1,0 @@
-/usr/bin/cc CMakeFiles/driver.dir/src/driver.c.o CMakeFiles/driver.dir/src/ipc.c.o CMakeFiles/driver.dir/src/logging.c.o -o driver 

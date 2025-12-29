@@ -1,1 +1,0 @@
-/usr/bin/cc CMakeFiles/passenger.dir/src/passenger.c.o CMakeFiles/passenger.dir/src/ipc.c.o CMakeFiles/passenger.dir/src/logging.c.o -o passenger 
