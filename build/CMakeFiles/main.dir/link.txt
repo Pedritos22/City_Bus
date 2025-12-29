@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/main.dir/src/main.c.o CMakeFiles/main.dir/src/ipc.c.o CMakeFiles/main.dir/src/logging.c.o -o main 

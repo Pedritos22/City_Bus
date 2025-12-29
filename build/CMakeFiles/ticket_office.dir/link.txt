@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/ticket_office.dir/src/ticket_office.c.o CMakeFiles/ticket_office.dir/src/ipc.c.o CMakeFiles/ticket_office.dir/src/logging.c.o -o ticket_office 
