@@ -8,27 +8,32 @@
 #include <stdio.h>
 
 int main(void) {
-    int msgid = msgget(MSG_KEY, IPC_CREAT | 0600);
-    if (msgid == -1) { perror("msgget"); exit(1); }
+    if (ipc_attach_all() == -1) {
+        log_ticket_office(LOG_ERROR, "Failed to attach to IPC resources");
+        exit(EXIT_FAILURE);
+    }
 
-    int sem_id = semget(SEM_KEY, SEM_COUNT, IPC_CREAT | 0600);
-    if (sem_id == -1) { perror("semget"); exit(1); }
+    log_ticket_office(LOG_INFO, "Started");
 
-    passenger_msg_t msg;
-    printf("[TICKET_OFFICE] Started\n");
-    fflush(stdout);
+    ticket_msg_t msg;
 
     while (1) {
-        sem_lock(sem_id, SEM_REGISTER);
-        if (msgrcv(msgid, &msg, sizeof(msg) - sizeof(long), 1, 0) > 0) {
-            msg.ticket_issued = 1;
-            msg.mtype = msg.pid;
-            if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) perror("msgsnd ack");
+        sem_lock(SEM_TICKET_OFFICE_0);
 
-            printf("[TICKET_OFFICE] Ticket issued for PID %d\n", msg.pid);
-            log_event("logs/ticket_office.log", "[TICKET_OFFICE] Ticket issued");
-            fflush(stdout);
+        ssize_t ret = msg_recv_ticket(&msg, MSG_TICKET_REQUEST, 0);
+        if (ret > 0) {
+            msg.approved = 1;
+            msg.mtype = msg.passenger.pid;
+            if (msg_send_ticket(&msg) == -1) {
+                log_ticket_office(LOG_ERROR, "Failed to send ticket ack");
+            }
+
+            log_ticket_office(LOG_INFO, "Ticket issued for PID %d", msg.passenger.pid);
         }
-        sem_unlock(sem_id, SEM_REGISTER);
+
+        sem_unlock(SEM_TICKET_OFFICE_0);
     }
+
+    ipc_detach_all();
+    return 0;
 }

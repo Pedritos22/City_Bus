@@ -12,41 +12,45 @@
 int main(void) {
     srand(time(NULL) ^ getpid());
 
-    int msgid = msgget(MSG_KEY, IPC_CREAT | 0600);
-    if (msgid == -1) { perror("msgget"); exit(1); }
-
-    int sem_id = semget(SEM_KEY, SEM_COUNT, IPC_CREAT | 0600);
-    if (sem_id == -1) { perror("semget"); exit(1); }
-
-    passenger_msg_t msg;
-    msg.mtype = 1;
-    msg.pid = getpid();
-    msg.has_bike = rand() % 2;
-    msg.is_vip = (rand() % 100) < VIP_PERCENT;
-    msg.age = rand() % 70 + 5;
-    msg.ticket_issued = msg.is_vip ? 1 : 0;
-
-    if (!msg.is_vip) {
-        if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
-            perror("msgsnd request");
-            exit(1);
-        }
-
-        passenger_msg_t ack;
-        if (msgrcv(msgid, &ack, sizeof(ack) - sizeof(long), getpid(), 0) == -1) {
-            perror("msgrcv ack");
-            exit(1);
-        }
+    if (ipc_attach_all() == -1) {
+        log_passenger(LOG_ERROR, "Failed to attach to IPC resources");
+        exit(EXIT_FAILURE);
     }
 
-    printf("[PASSENGER] PID %d ready to board (VIP=%d, Age=%d, Bike=%d)\n",
-           getpid(), msg.is_vip, msg.age, msg.has_bike);
-    fflush(stdout);
+    passenger_info_t info;
+    info.pid = getpid();
+    info.has_bike = (rand() % 100) < BIKE_PERCENT;
+    info.is_vip = (rand() % 100) < VIP_PERCENT;
+    info.age = rand() % (MAX_AGE - MIN_AGE + 1) + MIN_AGE;
+    info.has_ticket = info.is_vip ? 1 : 0;
+    info.is_child = IS_CHILD(info.age);
+    info.seat_count = 1;
+
+    if (!info.is_vip) {
+        ticket_msg_t msg;
+        msg.mtype = MSG_TICKET_REQUEST;
+        msg.passenger = info;
+
+        if (msg_send_ticket(&msg) == -1) {
+            log_passenger(LOG_ERROR, "Failed to send ticket request");
+            exit(EXIT_FAILURE);
+        }
+
+        ticket_msg_t ack;
+        if (msg_recv_ticket(&ack, getpid(), 0) == -1) {
+            log_passenger(LOG_ERROR, "Failed to receive ticket ack");
+            exit(EXIT_FAILURE);
+        }
+        info.has_ticket = ack.approved;
+    }
+
+    log_passenger(LOG_INFO, "PID %d ready to board (VIP=%d, Age=%d, Bike=%d)",
+           getpid(), info.is_vip, info.age, info.has_bike);
 
     sleep(rand() % 3 + 1);
 
-    printf("[PASSENGER] PID %d boarded\n", getpid());
-    fflush(stdout);
+    log_passenger(LOG_INFO, "PID %d boarded", getpid());
 
+    ipc_detach_all();
     return 0;
 }

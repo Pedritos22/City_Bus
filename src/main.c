@@ -1,4 +1,6 @@
 #include "config.h"
+#include "logging.h"
+#include "ipc.h"
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -7,7 +9,9 @@
 #include <sys/wait.h>
 
 int main(void) {
-    mkdir("logs", 0755); // create logs dir if does not exist
+    log_init(); // create logs dir if does not exist
+
+    log_master(LOG_INFO, "Simulation starting");
 
     pid_t pid;
 
@@ -18,6 +22,7 @@ int main(void) {
         perror("execl dispatcher failed");
         exit(EXIT_FAILURE);
     }
+    log_master(LOG_INFO, "Dispatcher started with PID %d", pid);
 
     // ticket office
     pid = fork();
@@ -26,6 +31,7 @@ int main(void) {
         perror("execl ticket_office failed");
         exit(EXIT_FAILURE);
     }
+    log_master(LOG_INFO, "Ticket office started with PID %d", pid);
 
     // driver
     pid = fork();
@@ -34,6 +40,7 @@ int main(void) {
         perror("execl driver failed");
         exit(EXIT_FAILURE);
     }
+    log_master(LOG_INFO, "Driver started with PID %d", pid);
 
     // wait for ipcs to be ready
     sleep(1);
@@ -46,12 +53,14 @@ int main(void) {
             perror("execl passenger failed");
             exit(EXIT_FAILURE);
         }
+        log_master(LOG_DEBUG, "Passenger %d started with PID %d", i, pid);
         usleep(500000); // half a sec between pass
     }
 
     // waiting for the children
     for (int i = 0; i < MAX_PASSENGERS + 3; i++) wait(NULL);
 
+    log_master(LOG_INFO, "Simulation finished");
     printf("Simulation finished.\n");
     return 0;
 }
