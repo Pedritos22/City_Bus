@@ -235,7 +235,7 @@ void sem_lock(int sem_num) {
     op.sem_flg = 0;     // Block until available 
 
     if (semop(g_semid, &op, 1) == -1) {
-        if (errno != EINTR && errno != EIDRM) {
+        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
             perror("sem_lock: semop failed");
             exit(EXIT_FAILURE);
         }
@@ -249,7 +249,7 @@ void sem_unlock(int sem_num) {
     op.sem_flg = 0;
 
     if (semop(g_semid, &op, 1) == -1) {
-        if (errno != EINTR && errno != EIDRM) {
+        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
             perror("sem_unlock: semop failed");
             exit(EXIT_FAILURE);
         }
@@ -267,7 +267,7 @@ int sem_trylock(int sem_num) {
         if (errno == EAGAIN) {
             return 0;   // Would bloick
         }
-        if (errno != EINTR && errno != EIDRM) {
+        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
             perror("sem_trylock: semop failed");
         }
         return 0;
