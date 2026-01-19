@@ -424,7 +424,7 @@ int main(void) {
         }
         
         // Gather any terminated children
-        reap_children();
+        gather_children();
         
         // Random delay between passenger arrivals TODO: CHECKUP IF CAN DO IT ANOTHER WAY
         int delay_ms = MIN_ARRIVAL_MS + rand() % (MAX_ARRIVAL_MS - MIN_ARRIVAL_MS + 1);
@@ -436,7 +436,7 @@ int main(void) {
     // Monitor simulation progress
     while (g_running) {
         // Gather terminated children
-        reap_children();
+        gather_children();
         
         // Check progress
         if (!check_simulation_progress()) {
