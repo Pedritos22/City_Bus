@@ -203,7 +203,7 @@ static void depart_bus(shm_data_t *shm) {
         sleep(return_delay);
     }
     else {
-        usleep(100000);
+        usleep(10000);
     }
     sem_lock(SEM_SHM_MUTEX);
     bus->at_station = true;
@@ -315,14 +315,13 @@ int main(int argc, char *argv[]) {
             break;
         }
         sem_lock(SEM_SHM_MUTEX);
-        int am_active = (shm->active_bus_id == g_bus_id);
         int at_station = shm->buses[g_bus_id].at_station;
+        int boarding_open = shm->buses[g_bus_id].boarding_open;
         sem_unlock(SEM_SHM_MUTEX);
         
-        if (!at_station || !am_active) {
-            if (!log_is_perf_mode()) {
-                usleep(100000);
-            }
+        /* Any driver at station with boarding open can receive (multiple consumers, no deadlock) */
+        if (!at_station || !boarding_open) {
+            usleep(log_is_perf_mode() ? 10000 : 100000);
             continue;
         }
         if (log_is_perf_mode() && should_depart(shm)) {
@@ -385,7 +384,10 @@ int main(int argc, char *argv[]) {
         }
         if (ret > 0) {
             process_boarding_request(shm, &request);
-            sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
+            /* Only release slot if below cap (prevents ERANGE when value would exceed SEMVMX) */
+            if (sem_getval(SEM_BOARDING_QUEUE_SLOTS) < MAX_BOARDING_QUEUE_REQUESTS) {
+                sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
+            }
             if (log_is_perf_mode() && should_depart(shm)) {
                 sem_lock(SEM_SHM_MUTEX);
                 int next_bus = -1;

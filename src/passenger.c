@@ -12,9 +12,7 @@
 #include <pthread.h>
 #include <sys/msg.h>
 
-/*============================================================================
- * GLOBAL STATE
- *============================================================================*/
+
 
 static volatile sig_atomic_t g_running = 1;
 static passenger_info_t g_info;
@@ -26,9 +24,7 @@ static volatile int g_adult_boarded = 0;
 static pthread_mutex_t g_board_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_board_cond = PTHREAD_COND_INITIALIZER;
 
-/*============================================================================
- * SIGNAL HANDLERS
- *============================================================================*/
+
 
 static void handle_shutdown(int sig) {
     (void)sig;
@@ -202,7 +198,7 @@ static int purchase_ticket(shm_data_t *shm) {
     ssize_t ret = msg_recv_ticket(&response, g_info.pid, 0);
     
     if (ret == -1) {
-        if (errno == EINTR || errno == EIDRM) {
+        if (errno == EINTR || errno == EIDRM || errno == EINVAL) {
             sem_lock(SEM_SHM_MUTEX);
             shm->passengers_in_office--;
             sem_unlock(SEM_SHM_MUTEX);
@@ -329,9 +325,8 @@ static int attempt_boarding(shm_data_t *shm) {
     ssize_t ret = msg_recv_boarding(&response, g_info.pid, 0);
     
     if (ret == -1) {
-        /* Failed to receive response - unlock semaphore before returning */
         sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
-        if (errno == EINTR || errno == EIDRM) {
+        if (errno == EINTR || errno == EIDRM || errno == EINVAL) {
             return -1;
         }
         log_passenger(LOG_ERROR, "PID %d: Failed to receive boarding response", g_info.pid);

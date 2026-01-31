@@ -16,10 +16,14 @@
 
 static volatile sig_atomic_t g_running = 1;
 
+#define MAX_TRACKED_PASSENGERS  (10 * 1024 * 1024)  /* 10M */
+
 /* Process tracking */
 static pid_t g_dispatcher_pid = 0;
 static pid_t g_ticket_office_pids[TICKET_OFFICES];
 static pid_t g_driver_pids[MAX_BUSES];
+static pid_t g_passenger_pids[MAX_TRACKED_PASSENGERS];
+static int g_passenger_count = 0;
 static int g_passengers_spawned = 0;
 
 static void handle_shutdown(int sig) {
@@ -170,19 +174,31 @@ static int reap_children(void) {
             printf("[MAIN] Dispatcher terminated\n");
             g_dispatcher_pid = 0;
         } else {
-            /* Check ticket offices */
+            int found = 0;
             for (int i = 0; i < TICKET_OFFICES; i++) {
                 if (pid == g_ticket_office_pids[i]) {
                     printf("[MAIN] Ticket office %d terminated\n", i);
                     g_ticket_office_pids[i] = 0;
+                    found = 1;
                     break;
                 }
             }
-            for (int i = 0; i < MAX_BUSES; i++) {
-                if (pid == g_driver_pids[i]) {
-                    printf("[MAIN] Driver %d terminated\n", i);
-                    g_driver_pids[i] = 0;
-                    break;
+            if (!found) {
+                for (int i = 0; i < MAX_BUSES; i++) {
+                    if (pid == g_driver_pids[i]) {
+                        printf("[MAIN] Driver %d terminated\n", i);
+                        g_driver_pids[i] = 0;
+                        found = 1;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                for (int i = 0; i < g_passenger_count; i++) {
+                    if (g_passenger_pids[i] == pid) {
+                        g_passenger_pids[i] = g_passenger_pids[--g_passenger_count];
+                        break;
+                    }
                 }
             }
         }
@@ -228,38 +244,46 @@ static int check_simulation_progress(void) {
 
 static void terminate_children(void) {
     printf("[MAIN] Terminating all child processes...\n");
+    for (int i = 0; i < g_passenger_count; i++) {
+        if (g_passenger_pids[i] > 0) {
+            kill(g_passenger_pids[i], SIGTERM);
+        }
+    }
     for (int i = 0; i < TICKET_OFFICES; i++) {
         if (g_ticket_office_pids[i] > 0) {
             kill(g_ticket_office_pids[i], SIGTERM);
         }
     }
-    
     for (int i = 0; i < MAX_BUSES; i++) {
         if (g_driver_pids[i] > 0) {
             kill(g_driver_pids[i], SIGTERM);
         }
     }
-    
     if (g_dispatcher_pid > 0) {
         kill(g_dispatcher_pid, SIGTERM);
     }
     printf("[MAIN] Waiting for children to exit gracefully...\n");
     sleep(3);
     reap_children();
+    for (int i = 0; i < g_passenger_count; i++) {
+        if (g_passenger_pids[i] > 0) {
+            kill(g_passenger_pids[i], SIGKILL);
+            waitpid(g_passenger_pids[i], NULL, 0);
+        }
+    }
+    g_passenger_count = 0;
     for (int i = 0; i < TICKET_OFFICES; i++) {
         if (g_ticket_office_pids[i] > 0) {
             kill(g_ticket_office_pids[i], SIGKILL);
             waitpid(g_ticket_office_pids[i], NULL, 0);
         }
     }
-    
     for (int i = 0; i < MAX_BUSES; i++) {
         if (g_driver_pids[i] > 0) {
             kill(g_driver_pids[i], SIGKILL);
             waitpid(g_driver_pids[i], NULL, 0);
         }
     }
-    
     if (g_dispatcher_pid > 0) {
         kill(g_dispatcher_pid, SIGKILL);
         waitpid(g_dispatcher_pid, NULL, 0);
@@ -483,7 +507,9 @@ int main(int argc, char *argv[]) {
         }
 
         g_passengers_spawned++;
-        /* Use the same log_mode and is_minimal variables defined earlier in main() */
+        if (g_passenger_count < MAX_TRACKED_PASSENGERS) {
+            g_passenger_pids[g_passenger_count++] = pid;
+        }
         if ((g_passengers_spawned % 1000) == 0 && !is_minimal) {
             printf("[MAIN] Spawned %d passenger processes so far\n", g_passengers_spawned);
         }

@@ -371,13 +371,12 @@ int main(void) {
     
     // Shutdown sequence
     log_dispatcher(LOG_INFO, "Dispatcher shutting down...");
-    
-    // Mark simulation as ended
-    sem_lock(SEM_SHM_MUTEX);
-    shm->simulation_running = false;
-    sem_unlock(SEM_SHM_MUTEX);
+    if (sem_lock(SEM_SHM_MUTEX) == 0) {
+        shm->simulation_running = false;
+        sem_unlock(SEM_SHM_MUTEX);
+    }
     log_dispatcher(LOG_INFO, "Waiting for processes to exit gracefully...");
-    sleep(3);
+    sleep(2);
     print_status(shm);
     print_final_stats(shm);
     log_dispatcher(LOG_INFO, "Cleaning up IPC resources");

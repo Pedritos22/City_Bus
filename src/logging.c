@@ -84,21 +84,21 @@ static const char* level_to_string(log_level_t level) {
 static void write_log_entry(const char *filename, const char *entry) {
     FILE *f = fopen(filename, "a");
     if (f == NULL) {
-        perror("write_log_entry: fopen failed");
         return;
     }
 
-    if (flock(fileno(f), LOCK_EX) == -1) {
-        perror("write_log_entry: flock LOCK_EX failed");
+    /* Retry flock on EINTR (signal interruption) */
+    while (flock(fileno(f), LOCK_EX) == -1) {
+        if (errno == EINTR) {
+            continue;
+        }
         fclose(f);
         return;
     }
 
     fprintf(f, "%s\n", entry);
     fflush(f);
-    if (flock(fileno(f), LOCK_UN) == -1) {
-        perror("write_log_entry: flock LOCK_UN failed");
-    }
+    flock(fileno(f), LOCK_UN);
 
     fclose(f);
 }

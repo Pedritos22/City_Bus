@@ -175,48 +175,41 @@ void ipc_detach_all(void) {
 }
 
 void ipc_cleanup_all(void) {
-    if (g_shmid != -1) {
-        if (shmctl(g_shmid, IPC_RMID, NULL) == -1) {
-            if (errno != EINVAL && errno != EIDRM) {
-                perror("ipc_cleanup_all: shmctl IPC_RMID failed");
-            }
-        }
+    /* Try to get IDs by key if not already set (fallback for main process) */
+    int shmid = g_shmid;
+    int semid = g_semid;
+    int msgid_ticket = g_msgid_ticket;
+    int msgid_boarding = g_msgid_boarding;
+    int msgid_dispatch = g_msgid_dispatch;
+
+    if (shmid == -1) shmid = shmget(SHM_KEY, 0, 0);
+    if (semid == -1) semid = semget(SEM_KEY, 0, 0);
+    if (msgid_ticket == -1) msgid_ticket = msgget(MSG_TICKET_KEY, 0);
+    if (msgid_boarding == -1) msgid_boarding = msgget(MSG_BOARDING_KEY, 0);
+    if (msgid_dispatch == -1) msgid_dispatch = msgget(MSG_DISPATCH_KEY, 0);
+
+    if (shmid != -1) {
+        shmctl(shmid, IPC_RMID, NULL);
         g_shmid = -1;
     }
 
-    if (g_semid != -1) {
-        if (semctl(g_semid, 0, IPC_RMID) == -1) {
-            if (errno != EINVAL && errno != EIDRM) {
-                perror("ipc_cleanup_all: semctl IPC_RMID failed");
-            }
-        }
+    if (semid != -1) {
+        semctl(semid, 0, IPC_RMID);
         g_semid = -1;
     }
 
-    if (g_msgid_ticket != -1) {
-        if (msgctl(g_msgid_ticket, IPC_RMID, NULL) == -1) {
-            if (errno != EINVAL && errno != EIDRM) {
-                perror("ipc_cleanup_all: msgctl ticket IPC_RMID failed");
-            }
-        }
+    if (msgid_ticket != -1) {
+        msgctl(msgid_ticket, IPC_RMID, NULL);
         g_msgid_ticket = -1;
     }
 
-    if (g_msgid_boarding != -1) {
-        if (msgctl(g_msgid_boarding, IPC_RMID, NULL) == -1) {
-            if (errno != EINVAL && errno != EIDRM) {
-                perror("ipc_cleanup_all: msgctl boarding IPC_RMID failed");
-            }
-        }
+    if (msgid_boarding != -1) {
+        msgctl(msgid_boarding, IPC_RMID, NULL);
         g_msgid_boarding = -1;
     }
 
-    if (g_msgid_dispatch != -1) {
-        if (msgctl(g_msgid_dispatch, IPC_RMID, NULL) == -1) {
-            if (errno != EINVAL && errno != EIDRM) {
-                perror("ipc_cleanup_all: msgctl dispatch IPC_RMID failed");
-            }
-        }
+    if (msgid_dispatch != -1) {
+        msgctl(msgid_dispatch, IPC_RMID, NULL);
         g_msgid_dispatch = -1;
     }
 }
@@ -245,7 +238,7 @@ int sem_lock(int sem_num) {
     op.sem_flg = 0;
 
     if (semop(g_semid, &op, 1) == -1) {
-        if (errno == EINTR || errno == EIDRM) {
+        if (errno == EINTR || errno == EIDRM || errno == EINVAL) {
             return -1;
         }
         perror("sem_lock: semop failed");
@@ -261,7 +254,7 @@ void sem_unlock(int sem_num) {
     op.sem_flg = 0;
 
     if (semop(g_semid, &op, 1) == -1) {
-        if (errno != EINTR && errno != EIDRM) {
+        if (errno != EINTR && errno != EIDRM && errno != EINVAL && errno != ERANGE) {
             perror("sem_unlock: semop failed");
             exit(EXIT_FAILURE);
         }
@@ -320,7 +313,7 @@ ssize_t msg_recv_ticket(ticket_msg_t *msg, long mtype, int flags) {
 
 int msg_send_boarding(boarding_msg_t *msg) {
     if (msgsnd(g_msgid_boarding, msg, sizeof(boarding_msg_t) - sizeof(long), 0) == -1) {
-        if (errno != EINTR && errno != EIDRM) {
+        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
             perror("msg_send_boarding: msgsnd failed");
         }
         return -1;
@@ -330,7 +323,7 @@ int msg_send_boarding(boarding_msg_t *msg) {
 
 ssize_t msg_recv_boarding(boarding_msg_t *msg, long mtype, int flags) {
     ssize_t ret = msgrcv(g_msgid_boarding, msg, sizeof(boarding_msg_t) - sizeof(long), mtype, flags);
-    if (ret == -1 && errno != ENOMSG && errno != EINTR && errno != EIDRM) {
+    if (ret == -1 && errno != ENOMSG && errno != EINTR && errno != EIDRM && errno != EINVAL) {
         perror("msg_recv_boarding: msgrcv failed");
     }
     return ret;
