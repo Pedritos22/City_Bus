@@ -13,10 +13,12 @@ enum SemaphoreIndex {
     SEM_ENTRANCE_BIKE,
     SEM_BOARDING_MUTEX,
     SEM_BUS_READY,
-    SEM_TICKET_OFFICE_0,
-    SEM_TICKET_OFFICE_1,
-    SEM_COUNT
+    SEM_TICKET_OFFICE_BASE = 8
 };
+#define SEM_TICKET_OFFICE(id) (SEM_TICKET_OFFICE_BASE + (id))
+#define SEM_TICKET_QUEUE_SLOTS   (SEM_TICKET_OFFICE_BASE + TICKET_OFFICES)
+#define SEM_BOARDING_QUEUE_SLOTS (SEM_TICKET_QUEUE_SLOTS + 1)
+#define SEM_COUNT (SEM_BOARDING_QUEUE_SLOTS + 1)
 
 enum TicketMsgType {
     MSG_TICKET_REQUEST = 1,
@@ -25,9 +27,10 @@ enum TicketMsgType {
 
 enum BoardingMsgType {
     MSG_BOARD_REQUEST = 1,
-    MSG_BOARD_GRANTED = 2,
-    MSG_BOARD_DENIED = 3,
-    MSG_BOARD_WAIT = 4
+    MSG_BOARD_REQUEST_VIP = 2,
+    MSG_BOARD_GRANTED = 3,
+    MSG_BOARD_DENIED = 4,
+    MSG_BOARD_WAIT = 5
 };
 
 enum DispatchMsgType {
@@ -53,11 +56,22 @@ typedef struct {
     bool station_open;
     bool boarding_allowed;
     bool early_departure_flag;
+    bool spawning_stopped;
+    bool station_closed;
 
     int total_passengers_created;
     int passengers_transported;
     int passengers_waiting;
     int passengers_in_office;
+    int passengers_left_early;
+
+    int adults_created;
+    int children_created;
+    int vip_people_created;
+    int tickets_sold_people;
+    int tickets_denied;
+    int boarded_people;
+    int boarded_vip_people;
 
     bus_state_t buses[MAX_BUSES];
     int active_bus_id;

@@ -13,8 +13,8 @@
 #include <sys/sem.h>
 
 static volatile sig_atomic_t g_running = 1;
-static volatile sig_atomic_t g_early_depart = 0;    // SIGUSR1 flag
-static volatile sig_atomic_t g_block_station = 0;   // SIGUSR2 flag
+static volatile sig_atomic_t g_early_depart = 0;
+static volatile sig_atomic_t g_block_station = 0;
 
 /**  
  * Handler for SIGUSR1, early departure signal.
@@ -33,14 +33,9 @@ static void handle_sigusr1(int sig) {
  */
 static void handle_sigusr2(int sig) {
     (void)sig;
-    g_block_station = !g_block_station;
-    if (g_block_station) {
-        const char msg[] = "\n[DISPATCHER] SIGUSR2 received - station BLOCKED\n";
-        write(STDOUT_FILENO, msg, sizeof(msg) - 1);
-    } else {
-        const char msg[] = "\n[DISPATCHER] SIGUSR2 received - station UNBLOCKED\n";
-        write(STDOUT_FILENO, msg, sizeof(msg) - 1);
-    }
+    g_block_station = 1;
+    const char msg[] = "\n[DISPATCHER] SIGUSR2 received - station CLOSED (end simulation)\n";
+    write(STDOUT_FILENO, msg, sizeof(msg) - 1);
 }
 
 /**
@@ -58,54 +53,42 @@ static void handle_sigchld(int sig) {
     (void)sig;
 }
 
-/**
- * Cleanup of all ipc processes
-*/
-// void cleanup(int sig) {
-//     (void)sig;
-//     log_dispatcher(LOG_INFO, "Cleaning up and exiting");
-//     ipc_detach_all();
-//     ipc_cleanup_all();
-//     exit(0);
-// }
-
 static void setup_signals(void) {
     struct sigaction sa;
     
-    // Initialize sigaction structure
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     
-    // SIGUSR1 - early departure
+    /* SIGUSR1 - early departure */
     sa.sa_handler = handle_sigusr1;
     if (sigaction(SIGUSR1, &sa, NULL) == -1) {
         perror("sigaction SIGUSR1");
         exit(EXIT_FAILURE);
     }
     
-    // SIGUSR2 - block station
+    /* SIGUSR2 - block station */
     sa.sa_handler = handle_sigusr2;
     if (sigaction(SIGUSR2, &sa, NULL) == -1) {
         perror("sigaction SIGUSR2");
         exit(EXIT_FAILURE);
     }
     
-    // SIGINT - shutdown
+    /* SIGINT - shutdown */
     sa.sa_handler = handle_shutdown;
     if (sigaction(SIGINT, &sa, NULL) == -1) {
         perror("sigaction SIGINT");
         exit(EXIT_FAILURE);
     }
     
-    // SIGTERM - shutdown
+    /* SIGTERM - shutdown */
     sa.sa_handler = handle_shutdown;
     if (sigaction(SIGTERM, &sa, NULL) == -1) {
         perror("sigaction SIGTERM");
         exit(EXIT_FAILURE);
     }
     
-    // SIGCHLD - child termination
+    /* SIGCHLD - child termination */
     sa.sa_handler = handle_sigchld;
     sa.sa_flags = SA_NOCLDSTOP;  /* Don't notify on stop, only terminate */
     if (sigaction(SIGCHLD, &sa, NULL) == -1) {
@@ -119,13 +102,23 @@ static void init_shared_state(shm_data_t *shm) {
     shm->station_open = true;
     shm->boarding_allowed = true;
     shm->early_departure_flag = false;
+    shm->spawning_stopped = false;
+    shm->station_closed = false;
     
     shm->total_passengers_created = 0;
     shm->passengers_transported = 0;
     shm->passengers_waiting = 0;
     shm->passengers_in_office = 0;
+    shm->passengers_left_early = 0;
+
+    shm->adults_created = 0;
+    shm->children_created = 0;
+    shm->vip_people_created = 0;
+    shm->tickets_sold_people = 0;
+    shm->tickets_denied = 0;
+    shm->boarded_people = 0;
+    shm->boarded_vip_people = 0;
     
-    // Initialize all buses
     for (int i = 0; i < MAX_BUSES; i++) {
         shm->buses[i].id = i;
         shm->buses[i].at_station = true;
@@ -140,7 +133,7 @@ static void init_shared_state(shm_data_t *shm) {
     
     shm->active_bus_id = -1;
     
-    // Initialize ticket offices
+    /* Initialize ticket offices */
     for (int i = 0; i < TICKET_OFFICES; i++) {
         shm->ticket_office_busy[i] = 0;
         shm->ticket_office_pids[i] = 0;
@@ -150,138 +143,185 @@ static void init_shared_state(shm_data_t *shm) {
     shm->dispatcher_pid = getpid();
 }
 
+static void forward_signal_to_drivers(shm_data_t *shm, int sig) {
+    sem_lock(SEM_SHM_MUTEX);
+    for (int i = 0; i < MAX_BUSES; i++) {
+        pid_t driver_pid = shm->driver_pids[i];
+        if (driver_pid > 0) {
+            if (kill(driver_pid, sig) == -1) {
+                if (errno != ESRCH) {
+                    perror("forward_signal_to_drivers: kill failed");
+                }
+            }
+        }
+    }
+    sem_unlock(SEM_SHM_MUTEX);
+}
+
 static void process_signals(shm_data_t *shm) {
-    // Handle early departure flag
     if (g_early_depart) {
         g_early_depart = 0;
         
-        sem_lock(SEM_SHM_MUTEX);
-        shm->early_departure_flag = true;
-        sem_unlock(SEM_SHM_MUTEX);
+        log_dispatcher(LOG_INFO, "Early departure signal processed - forwarding SIGUSR1 to drivers");
         
-        log_dispatcher(LOG_INFO, "Early departure signal processed, buses may depart with partial capacity");
-        
-        // Send dispatch message to driver(s)
-        dispatch_msg_t msg;
-        msg.mtype = MSG_DISPATCH_DEPART;
-        msg.sender_pid = getpid();
-        msg.target_bus = -1;  // All buses
-        snprintf(msg.details, sizeof(msg.details), "Early departure authorized!");
-        msg_send_dispatch(&msg);
+        forward_signal_to_drivers(shm, SIGUSR1);
     }
     
-    // Handle station block flag
-    sem_lock(SEM_SHM_MUTEX);
     if (g_block_station) {
-        if (shm->station_open) {
-            shm->station_open = false;
-            shm->boarding_allowed = false;
+        sem_lock(SEM_SHM_MUTEX);
+        if (!shm->station_closed) {
+            shm->station_closed = true;
+            shm->station_open = false;      /* no new entries */
+            shm->boarding_allowed = false;  /* no more boarding - passengers waiting should leave */
+            shm->spawning_stopped = true;   /* main should stop spawning */
             sem_unlock(SEM_SHM_MUTEX);
-            
-            log_dispatcher(LOG_WARN, "Station entry BLOCKED, no new passengers allowed");
-            
-            // Block the station entry semaphore
+
+            log_dispatcher(LOG_WARN, "Station CLOSED - no new entries, no boarding, simulation ending");
+            printf("[DISPATCHER] SIGUSR2 processed - station closed, boarding stopped, spawning stopped\n");
+            fflush(stdout);
+
             sem_setval(SEM_STATION_ENTRY, 0);
-            
-            dispatch_msg_t msg;
-            msg.mtype = MSG_DISPATCH_BLOCK;
-            msg.sender_pid = getpid();
-            msg.target_bus = -1;
-            snprintf(msg.details, sizeof(msg.details), "Station blocked by dispatcher");
-            msg_send_dispatch(&msg);
-        } else {
-            sem_unlock(SEM_SHM_MUTEX);
-        }
-    } else {
-        if (!shm->station_open) {
-            shm->station_open = true;
-            shm->boarding_allowed = true;
-            sem_unlock(SEM_SHM_MUTEX);
-            
-            log_dispatcher(LOG_INFO, "Station entry UNBLOCKED - normal operation resumed");
-            
-            // Restore station entry semaphore
-            sem_setval(SEM_STATION_ENTRY, 1);
-            
-            dispatch_msg_t msg;
-            msg.mtype = MSG_DISPATCH_UNBLOCK;
-            msg.sender_pid = getpid();
-            msg.target_bus = -1;
-            snprintf(msg.details, sizeof(msg.details), "Station unblocked by dispatcher");
-            msg_send_dispatch(&msg);
         } else {
             sem_unlock(SEM_SHM_MUTEX);
         }
     }
+}
+
+static int all_buses_at_station_and_empty(shm_data_t *shm) {
+    for (int i = 0; i < MAX_BUSES; i++) {
+        if (!shm->buses[i].at_station) return 0;
+        if (shm->buses[i].passenger_count != 0) return 0;
+        if (shm->buses[i].entering_count != 0) return 0;
+    }
+    return 1;
 }
 
 static void print_status(shm_data_t *shm) {
     sem_lock(SEM_SHM_MUTEX);
     
-    printf("\n========== DISPATCHER STATUS ==========\n");
-    printf("Station: %s | Boarding: %s | Early Depart: %s\n",
-           shm->station_open ? "OPEN" : "CLOSED",
-           shm->boarding_allowed ? "ALLOWED" : "BLOCKED",
-           shm->early_departure_flag ? "YES" : "NO");
-    printf("Passengers: Created=%d, Transported=%d, Waiting=%d, In Office=%d\n",
-           shm->total_passengers_created,
-           shm->passengers_transported,
-           shm->passengers_waiting,
-           shm->passengers_in_office);
-    printf("Tickets issued: %d\n", shm->tickets_issued);
-    
-    printf("Buses:\n");
-    for (int i = 0; i < MAX_BUSES; i++) {
-        printf("  Bus %d: %s | Passengers: %d/%d | Bikes: %d/%d | Entering: %d\n",
-               i,
-               shm->buses[i].at_station ? "AT STATION" : "EN ROUTE",
-               shm->buses[i].passenger_count, BUS_CAPACITY,
-               shm->buses[i].bike_count, BIKE_CAPACITY,
-               shm->buses[i].entering_count);
-    }
-    printf("Active bus for boarding: %d\n", shm->active_bus_id);
-    printf("==========================================\n\n");
-    
+    int station_open = shm->station_open;
+    int boarding_allowed = shm->boarding_allowed;
+    int early_depart = shm->early_departure_flag;
+    int created = shm->total_passengers_created;
+    int transported = shm->passengers_transported;
+    int waiting = shm->passengers_waiting;
+    int in_office = shm->passengers_in_office;
+    int tickets = shm->tickets_issued;
+    int active_bus = shm->active_bus_id;
     sem_unlock(SEM_SHM_MUTEX);
-    fflush(stdout);
+
+    const char *log_mode = getenv("BUS_LOG_MODE");
+    int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
+    
+    if (is_minimal) {
+        printf("STATUS: created=%d transported=%d waiting=%d in_office=%d tickets=%d\n",
+               created, transported, waiting, in_office, tickets);
+        fflush(stdout);
+    } else {
+        log_dispatcher(LOG_INFO,
+                      "STATUS station=%s boarding=%s early=%s created=%d transported=%d waiting=%d in_office=%d tickets=%d active_bus=%d",
+                      station_open ? "OPEN" : "CLOSED",
+                      boarding_allowed ? "ALLOWED" : "BLOCKED",
+                      early_depart ? "YES" : "NO",
+                      created, transported, waiting, in_office, tickets, active_bus);
+    }
 }
 
-/**
- * Checker if simulation should end.
- * Ends when all passengers transported and simulation marked as complete.
- * EXCEPTION - SIGINT, ensure good cleanup.
- */
 static int check_simulation_end(shm_data_t *shm) {
     sem_lock(SEM_SHM_MUTEX);
     int done = !shm->simulation_running;
-    int all_transported = (shm->passengers_transported >= shm->total_passengers_created &&
-                          shm->total_passengers_created >= MAX_PASSENGERS);
+    int stop = shm->spawning_stopped;
+    int waiting = shm->passengers_waiting;
+    int in_office = shm->passengers_in_office;
+    int buses_done = all_buses_at_station_and_empty(shm);
     sem_unlock(SEM_SHM_MUTEX);
-    
-    return done || all_transported;
+
+    if (done) return 1;
+
+    if (stop && waiting <= 0 && in_office <= 0 && buses_done) {
+        return 1;
+    }
+
+    return 0;
 }
 
-// ======= MAIN ======== 
+static void print_final_stats(shm_data_t *shm) {
+    sem_lock(SEM_SHM_MUTEX);
+    int created = shm->total_passengers_created;
+    int transported = shm->passengers_transported;
+    int waiting = shm->passengers_waiting;
+    int in_office = shm->passengers_in_office;
+    int left_early = shm->passengers_left_early;
+    int tickets = shm->tickets_issued;
+    int adults = shm->adults_created;
+    int children = shm->children_created;
+    int vip_created = shm->vip_people_created;
+    int sold_people = shm->tickets_sold_people;
+    int denied = shm->tickets_denied;
+    int boarded = shm->boarded_people;
+    int boarded_vip = shm->boarded_vip_people;
+    int on_bus = 0;
+    for (int i = 0; i < MAX_BUSES; i++) {
+        on_bus += shm->buses[i].passenger_count;
+    }
+    sem_unlock(SEM_SHM_MUTEX);
+
+    int sum = transported + waiting + in_office + on_bus + left_early;
+    if (created != sum) {
+        log_dispatcher(LOG_WARN, "STATS INCONSISTENCY: created=%d but transported+waiting+in_office+on_bus+left_early=%d (diff=%d)",
+                       created, sum, created - sum);
+        log_stats("WARNING: created=%d vs transported+waiting+in_office+on_bus+left_early=%d (diff=%d)", created, sum, created - sum);
+    }
+
+    printf("\n========== FINAL STATS ==========\n");
+    printf("Created people: %d (adults=%d, children=%d, vip_people=%d)\n", created, adults, children, vip_created);
+    printf("Tickets issued: %d (people covered=%d, denied=%d)\n", tickets, sold_people, denied);
+    printf("Boarded people: %d (vip_people=%d)\n", boarded, boarded_vip);
+    printf("Transported people: %d\n", transported);
+    printf("Left early (station closed): %d\n", left_early);
+    printf("Remaining: waiting=%d in_office=%d\n", waiting, in_office);
+    printf("================================\n\n");
+
+    log_dispatcher(LOG_INFO,
+        "STATS created=%d adults=%d children=%d vip_people=%d tickets_issued=%d tickets_people=%d denied=%d boarded=%d boarded_vip=%d transported=%d left_early=%d waiting=%d in_office=%d",
+        created, adults, children, vip_created, tickets, sold_people, denied, boarded, boarded_vip, transported, left_early, waiting, in_office);
+
+    log_stats("========== FINAL STATISTICS ==========");
+    log_stats("Created people: %d (adults=%d, children=%d, vip_people=%d)", created, adults, children, vip_created);
+    log_stats("Tickets issued: %d (people covered=%d, denied=%d)", tickets, sold_people, denied);
+    log_stats("Boarded people: %d (vip_people=%d)", boarded, boarded_vip);
+    log_stats("Transported people: %d", transported);
+    log_stats("Left early (station closed): %d", left_early);
+    log_stats("Remaining: waiting=%d in_office=%d", waiting, in_office);
+    if (on_bus > 0) {
+        log_stats("Still on buses: %d", on_bus);
+    }
+    log_stats("Consistency: created=%d, transported+waiting+in_office+on_bus+left_early=%d", created, sum);
+    log_stats("======================================");
+    log_dispatcher(LOG_INFO, "Final statistics written to stats.log");
+}
 
 int main(void) {
-    printf("[DISPATCHER] Starting (PID=%d)\n", getpid());
-    fflush(stdout);
-    
-    // Initialize logging
+    // Initialize logging.
     if (log_init() != 0) {
         fprintf(stderr, "Failed to initialize logging\n");
         exit(EXIT_FAILURE);
     }
     
-    setup_signals();
+    const char *log_mode = getenv("BUS_LOG_MODE");
+    int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
     
-    // Create all IPC resources
+    if (!is_minimal) {
+        printf("[DISPATCHER] Starting (PID=%d)\n", getpid());
+        fflush(stdout);
+    }
+    
+    setup_signals();
     if (ipc_create_all() != 0) {
         fprintf(stderr, "Failed to create IPC resources\n");
         exit(EXIT_FAILURE);
     }
     
-    // Get shared memory pointer
     shm_data_t *shm = ipc_get_shm();
     if (shm == NULL) {
         fprintf(stderr, "Failed to get shared memory\n");
@@ -289,34 +329,44 @@ int main(void) {
         exit(EXIT_FAILURE);
     }
     
-    // Initialize shared state
     init_shared_state(shm);
     
     log_dispatcher(LOG_INFO, "Dispatcher started and IPC resources created");
-    log_dispatcher(LOG_INFO, "PID=%d - Send SIGUSR1 for early departure, SIGUSR2 to toggle station block", getpid());
+    log_dispatcher(LOG_INFO, "DISPATCHER_PID=%d - Send SIGUSR1 for early departure, SIGUSR2 to CLOSE station (end simulation)", getpid());
     
-    printf("[DISPATCHER] Ready - IPC resources initialized\n");
-    printf("[DISPATCHER] Send SIGUSR1 to PID %d for early departure\n", getpid());
-    printf("[DISPATCHER] Send SIGUSR2 to PID %d to toggle station block\n", getpid());
-    fflush(stdout);
+    if (!is_minimal) {
+        printf("[DISPATCHER] Ready - IPC resources initialized\n");
+        printf("[DISPATCHER] DISPATCHER_PID=%d\n", getpid());
+        printf("[DISPATCHER] Send SIGUSR1 to PID %d for early departure\n", getpid());
+        printf("[DISPATCHER] Send SIGUSR2 to PID %d to CLOSE station (end simulation)\n", getpid());
+        fflush(stdout);
+    } else {
+        printf("[DISPATCHER] DISPATCHER_PID=%d\n", getpid());
+        fflush(stdout);
+    }
     
-    // Main dispatcher loop
+    int status_counter = 0;
     while (g_running) {
-        // Process any pending signals
+        // Process pending signals
         process_signals(shm);
-        
-        // Print status periodically
-        print_status(shm);
-        
-        // Check for simulation end
+        if (!is_minimal) {
+            print_status(shm);
+        } else {
+            status_counter++;
+            if (status_counter >= 3) {
+                print_status(shm);
+                status_counter = 0;
+            }
+        }
         if (check_simulation_end(shm)) {
             log_dispatcher(LOG_INFO, "Simulation complete - initiating shutdown");
             break;
         }
-        
-        // Sleep to avoid busy waiting
-        // sleep() is interruptible by signals!!
-        sleep(DISPATCHER_INTERVAL);
+        if (!log_is_perf_mode()) {
+            sleep(DISPATCHER_INTERVAL);
+        } else {
+            usleep(10000);
+        }
     }
     
     // Shutdown sequence
@@ -326,25 +376,14 @@ int main(void) {
     sem_lock(SEM_SHM_MUTEX);
     shm->simulation_running = false;
     sem_unlock(SEM_SHM_MUTEX);
-    
-    // Send shutdown message to all processes
-    dispatch_msg_t shutdown_msg;
-    shutdown_msg.mtype = MSG_DISPATCH_SHUTDOWN;
-    shutdown_msg.sender_pid = getpid();
-    shutdown_msg.target_bus = -1;
-    snprintf(shutdown_msg.details, sizeof(shutdown_msg.details), "System shutdown");
-    msg_send_dispatch(&shutdown_msg);
-    
-    sleep(1);
-    
-    // Print final status
+    log_dispatcher(LOG_INFO, "Waiting for processes to exit gracefully...");
+    sleep(3);
     print_status(shm);
-    
-    // Cleanup of IPC resources
-    log_dispatcher(LOG_INFO, "Cleaning up and exiting");
+    print_final_stats(shm);
+    log_dispatcher(LOG_INFO, "Cleaning up IPC resources");
     ipc_detach_all();
     ipc_cleanup_all();
-
+    
     log_dispatcher(LOG_INFO, "Dispatcher terminated successfully");
     log_close();
     

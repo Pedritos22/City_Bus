@@ -10,6 +10,8 @@
 
 #define TICKET_OFFICES      2
 #define TICKET_PROCESS_TIME 1
+#define MAX_TICKET_QUEUE_REQUESTS   200
+#define MAX_BOARDING_QUEUE_REQUESTS 100
 
 #define MAX_PASSENGERS      20
 #define MIN_AGE             3
@@ -24,15 +26,14 @@
 
 #define DISPATCHER_INTERVAL 3
 
-// Useful for logging events
 #define LOG_DIR             "logs"
 #define LOG_MASTER          "logs/master.log"
 #define LOG_DISPATCHER      "logs/dispatcher.log"
 #define LOG_TICKET_OFFICE   "logs/ticket_office.log"
 #define LOG_DRIVER          "logs/driver.log"
 #define LOG_PASSENGER       "logs/passenger.log"
+#define LOG_STATS           "logs/stats.log"
 
-// All ipc keys
 #define IPC_KEY_BASE        0x4255
 #define SHM_KEY             (IPC_KEY_BASE + 0x01)
 #define SEM_KEY             (IPC_KEY_BASE + 0x02)

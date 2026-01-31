@@ -3,8 +3,6 @@
 
 #include "common.h"
 
-// IPC functions
-
 int ipc_create_all(void);
 int ipc_attach_all(void);
 void ipc_detach_all(void);
@@ -15,9 +13,9 @@ shm_data_t* ipc_get_shm(void);
 int ipc_get_shmid(void);
 
 int ipc_get_semid(void);
-void sem_lock(int sem_num);
+/* Returns 0 on success, -1 if IPC removed or interrupted (caller should exit) */
+int sem_lock(int sem_num);
 void sem_unlock(int sem_num);
-int sem_trylock(int sem_num);
 int sem_getval(int sem_num);
 void sem_setval(int sem_num, int value);
 
@@ -33,7 +31,5 @@ ssize_t msg_recv_boarding(boarding_msg_t *msg, long mtype, int flags);
 
 int msg_send_dispatch(dispatch_msg_t *msg);
 ssize_t msg_recv_dispatch(dispatch_msg_t *msg, long mtype, int flags);
-
-
 
 #endif

@@ -16,17 +16,12 @@
 
 static volatile sig_atomic_t g_running = 1;
 
+/* Process tracking */
 static pid_t g_dispatcher_pid = 0;
 static pid_t g_ticket_office_pids[TICKET_OFFICES];
 static pid_t g_driver_pids[MAX_BUSES];
-static pid_t g_passenger_pids[MAX_PASSENGERS];
 static int g_passengers_spawned = 0;
 
-
-/**
- * Handler for SIGINT/SIGTERM - initiates shutdown.
- * Forwards signal to dispatcher for clean shutdown.
- */
 static void handle_shutdown(int sig) {
     (void)sig;
     g_running = 0;
@@ -34,45 +29,32 @@ static void handle_shutdown(int sig) {
     const char msg[] = "\n[MAIN] Shutdown signal received, terminating...\n";
     write(STDOUT_FILENO, msg, sizeof(msg) - 1);
     
-    // Forward signal to dispatcher
     if (g_dispatcher_pid > 0) {
         kill(g_dispatcher_pid, SIGTERM);
     }
 }
 
-
-/**
- * Handler for SIGCHLD - track child termination.
- */
 static void handle_sigchld(int sig) {
     (void)sig;
 }
 
-/**
- * Setup signal handlers for main process.
- */
 static void setup_signals(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
     
-    // Shutdown signals
+    /* Shutdown signals */
     sa.sa_handler = handle_shutdown;
     sa.sa_flags = 0;
     if (sigaction(SIGINT, &sa, NULL) == -1) perror("sigaction SIGINT");
     if (sigaction(SIGTERM, &sa, NULL) == -1) perror("sigaction SIGTERM");
     
-    // Child termination
+    /* Child termination */
     sa.sa_handler = handle_sigchld;
     sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
     if (sigaction(SIGCHLD, &sa, NULL) == -1) perror("sigaction SIGCHLD");
 }
 
-
-/**
- * Fork and exec the dispatcher process.
- * The dispatcher creates and manages all IPC resources.
- */
 static pid_t spawn_dispatcher(void) {
     pid_t pid = fork();
     
@@ -82,22 +64,16 @@ static pid_t spawn_dispatcher(void) {
     }
     
     if (pid == 0) {
-        // Child process, execl dispatcgher
+        /* Child process - exec dispatcher */
         execl("./dispatcher", "dispatcher", NULL);
         perror("execl dispatcher");
         _exit(EXIT_FAILURE);
     }
     
-    // Parent, return childID
     printf("[MAIN] Spawned dispatcher (PID=%d)\n", pid);
     return pid;
 }
 
-/**
- * Fork and exec a ticket office process.
- * 
- * Ticket office identifier (0 to TICKET_OFFICES-1)
- */
 static pid_t spawn_ticket_office(int office_id) {
     pid_t pid = fork();
     
@@ -107,7 +83,7 @@ static pid_t spawn_ticket_office(int office_id) {
     }
     
     if (pid == 0) {
-        // Child process, execl ticket office
+        /* Child process - exec ticket office */
         char id_str[16];
         snprintf(id_str, sizeof(id_str), "%d", office_id);
         execl("./ticket_office", "ticket_office", id_str, NULL);
@@ -119,11 +95,6 @@ static pid_t spawn_ticket_office(int office_id) {
     return pid;
 }
 
-/**
- * Fork and exec a driver process.
- * 
- * w/ a bus identifier (0 to MAX_BUSES-1)
- */
 static pid_t spawn_driver(int bus_id) {
     pid_t pid = fork();
     
@@ -133,7 +104,7 @@ static pid_t spawn_driver(int bus_id) {
     }
     
     if (pid == 0) {
-        // Child process, exec driver
+        /* Child process - exec driver */
         char id_str[16];
         snprintf(id_str, sizeof(id_str), "%d", bus_id);
         execl("./driver", "driver", id_str, NULL);
@@ -145,9 +116,6 @@ static pid_t spawn_driver(int bus_id) {
     return pid;
 }
 
-/**
- * Fork and exec a passenger process.
- */
 static pid_t spawn_passenger(void) {
     pid_t pid = fork();
     
@@ -157,7 +125,7 @@ static pid_t spawn_passenger(void) {
     }
     
     if (pid == 0) {
-        // Child process, exec passenger
+        /* Child process - exec passenger */
         execl("./passenger", "passenger", NULL);
         perror("execl passenger");
         _exit(EXIT_FAILURE);
@@ -166,11 +134,10 @@ static pid_t spawn_passenger(void) {
     return pid;
 }
 
+/*============================================================================
+ * SIMULATION CONTROL
+ *============================================================================*/
 
-/**
- * Wait for IPC resources to be ready.
- * Polls until shared memory is accessible.
- */
 static int wait_for_ipc(int timeout_seconds) {
     int elapsed = 0;
     
@@ -182,7 +149,7 @@ static int wait_for_ipc(int timeout_seconds) {
             }
         }
         
-        sleep(1); // TODO: CHECK IT UP
+        sleep(1);
         elapsed++;
         printf("[MAIN] Waiting for IPC resources... (%d/%d)\n", elapsed, timeout_seconds);
     }
@@ -191,25 +158,19 @@ static int wait_for_ipc(int timeout_seconds) {
     return -1;
 }
 
-/**
- * Gather terminated child processes.
- * Returns number of children gathered.
- */
-static int gather_children(void) {
-    int gathered = 0;
+static int reap_children(void) {
+    int reaped = 0;
     int status;
     pid_t pid;
     
-    // Wait for any terminated children
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        gathered++;
+        reaped++;
         
-        // Check which process terminated
         if (pid == g_dispatcher_pid) {
             printf("[MAIN] Dispatcher terminated\n");
             g_dispatcher_pid = 0;
         } else {
-            // Check ticket offices
+            /* Check ticket offices */
             for (int i = 0; i < TICKET_OFFICES; i++) {
                 if (pid == g_ticket_office_pids[i]) {
                     printf("[MAIN] Ticket office %d terminated\n", i);
@@ -217,8 +178,6 @@ static int gather_children(void) {
                     break;
                 }
             }
-            
-            // Check drivers
             for (int i = 0; i < MAX_BUSES; i++) {
                 if (pid == g_driver_pids[i]) {
                     printf("[MAIN] Driver %d terminated\n", i);
@@ -229,49 +188,46 @@ static int gather_children(void) {
         }
     }
     
-    return gathered;
+    return reaped;
 }
 
-/**
- * Check simulation progress.
- * Returns 1 if simulation should continue, 0 if complete.
- */
 static int check_simulation_progress(void) {
     shm_data_t *shm = ipc_get_shm();
     if (shm == NULL) {
-        return 0;  // No shm, so just stop
+        return 0;
     }
     
     sem_lock(SEM_SHM_MUTEX);
     int transported = shm->passengers_transported;
     int created = shm->total_passengers_created;
     int running = shm->simulation_running;
+    int stop_spawning = shm->spawning_stopped;
+    int waiting = shm->passengers_waiting;
+    int in_office = shm->passengers_in_office;
     sem_unlock(SEM_SHM_MUTEX);
     
-    printf("[MAIN] Progress: %d/%d passengers transported\n", transported, created);
+    /* Check log mode - only print to stdout if not minimal */
+    const char *log_mode = getenv("BUS_LOG_MODE");
+    int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
     
-    // Check if dispatcher is still running
+    if (!is_minimal) {
+        printf("[MAIN] Progress: %d/%d passengers transported\n", transported, created);
+    }
+    
     if (g_dispatcher_pid == 0) {
         printf("[MAIN] Dispatcher has terminated\n");
         return 0;
     }
     
-    // Check if all passengers have been transported
-    if (created >= MAX_PASSENGERS && transported >= created) {
-        printf("[MAIN] All passengers transported\n");
-        return 0;
+    if (stop_spawning && waiting <= 0 && in_office <= 0 && transported >= created) {
+        printf("[MAIN] Drain complete (spawning stopped)\n");
     }
     
     return running;
 }
 
-/**
- * Terminate all child processes gracefully.
- */
 static void terminate_children(void) {
     printf("[MAIN] Terminating all child processes...\n");
-    
-    // Send SIGTERM to all children
     for (int i = 0; i < TICKET_OFFICES; i++) {
         if (g_ticket_office_pids[i] > 0) {
             kill(g_ticket_office_pids[i], SIGTERM);
@@ -287,11 +243,9 @@ static void terminate_children(void) {
     if (g_dispatcher_pid > 0) {
         kill(g_dispatcher_pid, SIGTERM);
     }
-    
-    // Wait for children to terminate TODO: CHECK IF ALL RIGHTY
-    sleep(2);
-    
-    // Forcefully kill any remaining children [worst case scen.]
+    printf("[MAIN] Waiting for children to exit gracefully...\n");
+    sleep(3);
+    reap_children();
     for (int i = 0; i < TICKET_OFFICES; i++) {
         if (g_ticket_office_pids[i] > 0) {
             kill(g_ticket_office_pids[i], SIGKILL);
@@ -312,61 +266,140 @@ static void terminate_children(void) {
     }
 }
 
-/**
- * Wait for all remaining children to terminate.
- */
 static void wait_all_children(void) {
     int status;
     pid_t pid;
+    int timeout = 8;
+    int elapsed = 0;
+    int reaped_count = 0;
     
     printf("[MAIN] Waiting for all children to terminate...\n");
-    
-    while ((pid = wait(&status)) > 0) {
-        // Czekajka
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        reaped_count++;
     }
     
-    printf("[MAIN] All children terminated\n");
+    if (errno == ECHILD && reaped_count == 0) {
+        printf("[MAIN] All children terminated\n");
+        return;
+    }
+    while (elapsed < timeout) {
+        pid = waitpid(-1, &status, WNOHANG);
+        if (pid > 0) {
+            /* Reaped a child, reset timeout */
+            reaped_count++;
+            elapsed = 0;
+        } else if (pid == 0) {
+            sleep(1);
+            elapsed++;
+        } else {
+            if (errno == ECHILD) {
+                printf("[MAIN] All children terminated (reaped %d total)\n", reaped_count);
+                return;
+            }
+            sleep(1);
+            elapsed++;
+        }
+    }
+    
+    /* Timeout reached - check if any children still exist */
+    pid = waitpid(-1, &status, WNOHANG);
+    if (pid == -1 && errno == ECHILD) {
+        printf("[MAIN] All children terminated (reaped %d total)\n", reaped_count);
+    } else {
+        printf("[MAIN] Timeout waiting for children after %d seconds (reaped %d so far)\n", timeout, reaped_count);
+        printf("[MAIN] Some processes may still be running - they will exit when simulation_running=false\n");
+        printf("[MAIN] Continuing cleanup...\n");
+    }
 }
 
-// ============MAIN==============
+static void apply_cli_options(int argc, char *argv[]) {
+    /*
+     *   --log=verbose|summary|minimal
+     *   --log verbose|summary|minimal
+     *   --summary (same as --log=summary)
+     *   --quiet / -q (same as --log=minimal)
+     *
+     * We propagate the choice to all child processes via environment variable
+     * BUS_LOG_MODE, since child processes are exec()'d.
+     */
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "--quiet") == 0 || strcmp(arg, "-q") == 0) {
+            setenv("BUS_LOG_MODE", "minimal", 1);
+            continue;
+        }
+        if (strcmp(arg, "--summary") == 0) {
+            setenv("BUS_LOG_MODE", "summary", 1);
+            continue;
+        }
+        if (strncmp(arg, "--log=", 6) == 0) {
+            setenv("BUS_LOG_MODE", arg + 6, 1);
+            continue;
+        }
+        if (strcmp(arg, "--log") == 0) {
+            if (i + 1 < argc) {
+                setenv("BUS_LOG_MODE", argv[i + 1], 1);
+                i++;
+            } else {
+                fprintf(stderr, "[MAIN] Missing value for --log (expected verbose|summary|minimal)\n");
+            }
+            continue;
+        }
+        if (strcmp(arg, "--perf") == 0 || strcmp(arg, "--performance") == 0) {
+            /* Performance mode: disable artificial sleeps in simulation code */
+            setenv("BUS_PERF_MODE", "1", 1);
+            continue;
+        }
+        if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+            printf("Usage: ./main [--log=verbose|summary|minimal] [--summary] [--quiet|-q]\n");
+            printf("             [--perf]  (disable simulated sleeps for performance testing)\n");
+            exit(0);
+        }
+    }
+}
 
-int main(void) {
+int main(int argc, char *argv[]) {
     printf("========================================\n");
     printf("   SUBURBAN BUS SIMULATION\n");
     printf("========================================\n");
+
+    apply_cli_options(argc, argv);
+
     printf("Configuration:\n");
     printf("  Buses: %d (capacity: %d passengers, %d bikes)\n", 
            MAX_BUSES, BUS_CAPACITY, BIKE_CAPACITY);
     printf("  Ticket offices: %d\n", TICKET_OFFICES);
-    printf("  Passengers: %d\n", MAX_PASSENGERS);
+    printf("  Passengers: continuous until fork() fails or station closes\n");
     printf("  Boarding interval: %d seconds\n", BOARDING_INTERVAL);
     printf("  VIP percentage: %d%%\n", VIP_PERCENT);
     printf("========================================\n\n");
     
-    // Seed random number
+    /* Seed random number generator */
     srand(time(NULL));
     
+    /* Setup signal handlers */
     setup_signals();
     
-    // Initialize process tracking arrays
+    /* Initialize process tracking arrays */
     memset(g_ticket_office_pids, 0, sizeof(g_ticket_office_pids));
     memset(g_driver_pids, 0, sizeof(g_driver_pids));
-    memset(g_passenger_pids, 0, sizeof(g_passenger_pids));
     
-    // Create logs directory if does not exist
+    /* Create logs directory */
     if (mkdir(LOG_DIR, 0755) == -1 && errno != EEXIST) {
         perror("mkdir logs");
+        /* Continue anyway */
     }
     
-    // Clear old log files
+    /* Clear old log files */
     printf("[MAIN] Clearing old log files...\n");
     unlink(LOG_MASTER);
     unlink(LOG_DISPATCHER);
     unlink(LOG_TICKET_OFFICE);
     unlink(LOG_DRIVER);
     unlink(LOG_PASSENGER);
+    unlink(LOG_STATS);
     
-    // Start dispatcher
+    /* === STEP 1: Start dispatcher === */
     printf("[MAIN] Starting dispatcher...\n");
     g_dispatcher_pid = spawn_dispatcher();
     if (g_dispatcher_pid <= 0) {
@@ -374,7 +407,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
     
-    // Wait for IPC resources
+    /* === STEP 2: Wait for IPC resources === */
     printf("[MAIN] Waiting for IPC resources...\n");
     if (wait_for_ipc(10) != 0) {
         fprintf(stderr, "[MAIN] IPC resources not available\n");
@@ -382,7 +415,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
     
-    // Start ticket offices
+    /* === STEP 3: Start ticket offices === */
     printf("[MAIN] Starting ticket offices...\n");
     for (int i = 0; i < TICKET_OFFICES; i++) {
         g_ticket_office_pids[i] = spawn_ticket_office(i);
@@ -391,10 +424,10 @@ int main(void) {
         }
     }
     
-    // Give ticket offices time to start TODO: CHECK IF AIGHT
+    /* Give ticket offices time to start */
     usleep(100000);
     
-    // Start drivers
+    /* === STEP 4: Start drivers === */
     printf("[MAIN] Starting drivers...\n");
     for (int i = 0; i < MAX_BUSES; i++) {
         g_driver_pids[i] = spawn_driver(i);
@@ -403,66 +436,102 @@ int main(void) {
         }
     }
     
-    // Give drivers time to start TODO: CHECK IF OKAY
+    /* Give drivers time to start */
     usleep(100000);
     
-    printf("\n[MAIN] System initialized. Spawning passengers...\n\n");
-    printf("[MAIN] Dispatcher PID: %d\n", g_dispatcher_pid);
-    printf("[MAIN] Send SIGUSR1 to dispatcher for early departure\n");
-    printf("[MAIN] Send SIGUSR2 to dispatcher to toggle station block\n");
-    printf("[MAIN] Send SIGINT (Ctrl+C) to shutdown\n\n");
+    /* Check log mode */
+    const char *log_mode = getenv("BUS_LOG_MODE");
+    int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
     
-    // Spawn passengers at random intervals
-    while (g_running && g_passengers_spawned < MAX_PASSENGERS) {
-        // Spawn a passenger
-        pid_t pid = spawn_passenger();
-        if (pid > 0) {
-            g_passenger_pids[g_passengers_spawned] = pid;
-            g_passengers_spawned++;
-            printf("[MAIN] Spawned passenger %d/%d (PID=%d)\n",
-                   g_passengers_spawned, MAX_PASSENGERS, pid);
-        }
-        
-        // Gather any terminated children
-        gather_children();
-        
-        // Random delay between passenger arrivals TODO: CHECKUP IF CAN DO IT ANOTHER WAY
-        int delay_ms = MIN_ARRIVAL_MS + rand() % (MAX_ARRIVAL_MS - MIN_ARRIVAL_MS + 1);
-        usleep(delay_ms * 1000);
+    if (!is_minimal) {
+        printf("\n[MAIN] System initialized. Spawning passengers...\n\n");
+        printf("[MAIN] DISPATCHER_PID=%d\n", g_dispatcher_pid);
+        printf("[MAIN] Send SIGUSR1 to PID %d for early departure\n", g_dispatcher_pid);
+        printf("[MAIN] Send SIGUSR2 to PID %d to CLOSE station (end simulation)\n", g_dispatcher_pid);
+        printf("[MAIN] Send SIGINT (Ctrl+C) to shutdown\n\n");
+    } else {
+        /* Minimal mode: only print PID */
+        printf("[MAIN] DISPATCHER_PID=%d\n", g_dispatcher_pid);
     }
     
-    printf("\n[MAIN] All passengers spawned. Monitoring simulation...\n\n");
+    /* Also log dispatcher PID for easy grepping */
+    log_master(LOG_INFO, "DISPATCHER_PID=%d", g_dispatcher_pid);
     
-    // Monitor simulation progress
+    /* === STEP 5: Spawn passengers continuously until fork() fails or station closes === */
     while (g_running) {
-        // Gather terminated children
-        gather_children();
+        shm_data_t *shm = ipc_get_shm();
+        if (shm) {
+            sem_lock(SEM_SHM_MUTEX);
+            int stop_spawning = shm->spawning_stopped;
+            sem_unlock(SEM_SHM_MUTEX);
+            if (stop_spawning) {
+                printf("[MAIN] Spawning stopped by dispatcher (station closed) or previous fork() error\n");
+                break;
+            }
+        }
+
+        pid_t pid = spawn_passenger();
+        if (pid == -1) {
+            printf("[MAIN] fork() failed - stopping passenger creation\n");
+            shm_data_t *shm2 = ipc_get_shm();
+            if (shm2) {
+                sem_lock(SEM_SHM_MUTEX);
+                shm2->spawning_stopped = true;
+                sem_unlock(SEM_SHM_MUTEX);
+            }
+            break;
+        }
+
+        g_passengers_spawned++;
+        /* Use the same log_mode and is_minimal variables defined earlier in main() */
+        if ((g_passengers_spawned % 1000) == 0 && !is_minimal) {
+            printf("[MAIN] Spawned %d passenger processes so far\n", g_passengers_spawned);
+        }
+
+        reap_children();
+
+        /* Random delay between passenger arrivals (can be tuned in config) */
+        if (!log_is_perf_mode()) {
+            int delay_ms = MIN_ARRIVAL_MS + rand() % (MAX_ARRIVAL_MS - MIN_ARRIVAL_MS + 1);
+            usleep(delay_ms * 1000);
+        }
+    }
+    
+    printf("\n[MAIN] Passenger creation stopped. Monitoring simulation...\n\n");
+    
+    /* === STEP 6: Monitor simulation progress === */
+    while (g_running) {
+        /* Reap terminated children */
+        reap_children();
         
-        // Check progress
+        /* Check progress */
         if (!check_simulation_progress()) {
             break;
         }
         
-        // WAIT BEFORE CHECK TODO: ASK IF OKAY
+        /* Wait before checking again */
         sleep(5);
     }
     
     printf("\n[MAIN] Simulation complete. Shutting down...\n\n");
     
-    // CLEANUP
+    /* === STEP 7: Cleanup === */
     
-    // Signal dispatcher to shutdown [it cleanes up ipcs]
+    /* Signal dispatcher to shutdown (it will cleanup IPC) */
     if (g_dispatcher_pid > 0) {
         printf("[MAIN] Signaling dispatcher to shutdown...\n");
         kill(g_dispatcher_pid, SIGTERM);
         sleep(2);
     }
     
+    /* Terminate remaining children */
     terminate_children();
     
+    /* Wait for all children */
     wait_all_children();
     
     ipc_detach_all();
+    ipc_cleanup_all();
     
     printf("\n========================================\n");
     printf("   SIMULATION FINISHED\n");
@@ -473,6 +542,7 @@ int main(void) {
     printf("  - ticket_office.log\n");
     printf("  - driver.log\n");
     printf("  - passenger.log\n");
+    printf("  - stats.log\n");
     printf("========================================\n");
     
     return 0;

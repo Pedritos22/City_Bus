@@ -12,11 +12,14 @@
 #include <pthread.h>
 #include <sys/msg.h>
 
+/*============================================================================
+ * GLOBAL STATE
+ *============================================================================*/
 
 static volatile sig_atomic_t g_running = 1;
-static passenger_info_t g_info;  // <<< This passenger's information
+static passenger_info_t g_info;
 
-// Child thread management
+/* Child thread management */
 static pthread_t g_child_thread;
 static volatile int g_child_boarded = 0;
 static volatile int g_adult_boarded = 0;
@@ -27,17 +30,11 @@ static pthread_cond_t g_board_cond = PTHREAD_COND_INITIALIZER;
  * SIGNAL HANDLERS
  *============================================================================*/
 
-/**
- * Handler for SIGTERM/SIGINT - shutdown signal.
- */
 static void handle_shutdown(int sig) {
     (void)sig;
     g_running = 0;
 }
 
-/**
- * Setup signal handlers.
- */
 static void setup_signals(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -49,22 +46,23 @@ static void setup_signals(void) {
     if (sigaction(SIGTERM, &sa, NULL) == -1) perror("sigaction SIGTERM");
 }
 
+/*============================================================================
+ * CHILD THREAD
+ * 
+ * The child is implemented as a thread within the adult's process.
+ * This guarantees the child cannot board without adult supervision.
+ *============================================================================*/
 
-/**
- * Child thread function.
- * The child waits for the adult to board, then "boards" with them.
- * The child thread represents the child's presence alongside the adult.
- */
 static void* child_thread_func(void *arg) {
     int child_age = *(int*)arg;
     
-    log_passenger(LOG_INFO, "PID %d: Child (age=%d) thread started, accompanying adult",
-                 g_info.pid, child_age);
+    log_passenger(LOG_INFO, "PID %d: Child (age=%d%s) thread started, accompanying adult",
+                 g_info.pid, child_age, g_info.is_vip ? ", VIP" : "");
     
-    // Wait for adult to board
+    /* Wait for adult to board */
     pthread_mutex_lock(&g_board_mutex);
     while (!g_adult_boarded && g_running) {
-        // pthread_cond_wait blocks without busy waiting (podobno)
+        /* pthread_cond_wait blocks without busy waiting */
         pthread_cond_wait(&g_board_cond, &g_board_mutex);
     }
     pthread_mutex_unlock(&g_board_mutex);
@@ -81,9 +79,6 @@ static void* child_thread_func(void *arg) {
     return NULL;
 }
 
-/**
- * Start child thread if this adult has a child.
- */
 static int start_child_thread(void) {
     if (!g_info.has_child_with) {
         return 0;
@@ -103,15 +98,12 @@ static int start_child_thread(void) {
     return 0;
 }
 
-/**
- * Wait for child thread to complete.
- */
 static void wait_for_child_thread(void) {
     if (!g_info.has_child_with) {
         return;
     }
     
-    // Signal child thread that adult has finished
+    /* Signal child thread that adult has finished */
     pthread_mutex_lock(&g_board_mutex);
     pthread_cond_signal(&g_board_cond);
     pthread_mutex_unlock(&g_board_mutex);
@@ -121,6 +113,9 @@ static void wait_for_child_thread(void) {
     pthread_join(g_child_thread, NULL);
 }
 
+/*============================================================================
+ * PASSENGER INITIALIZATION
+ *============================================================================*/
 
 static void init_passenger(void) {
     g_info.pid = getpid();
@@ -129,40 +124,43 @@ static void init_passenger(void) {
      * Children are threads within adult processes */
     g_info.age = ADULT_MIN_AGE + rand() % (MAX_AGE - ADULT_MIN_AGE + 1);
     
-    // Adults are never children themselves
+    /* Adults are never children themselves */
     g_info.is_child = false;
     
-    // VIP status
+    /* VIP status (~1%) */
     g_info.is_vip = (rand() % 100) < VIP_PERCENT;
     
-    // Bicycle ownership
+    /* Bicycle ownership */
     g_info.has_bike = (rand() % 100) < BIKE_PERCENT;
     
-    // VIP passengers already have tickets
-    g_info.has_ticket = g_info.is_vip;
-    
-    // Determine if this adult brings a child
+    /* Determine if this adult brings a child */
     g_info.has_child_with = (rand() % 100) < ADULT_WITH_CHILD_PERCENT;
     
     if (g_info.has_child_with) {
-        // Generate child age (under CHILD_AGE_LIMIT)
+        /* Generate child age (under CHILD_AGE_LIMIT) */
         g_info.child_age = MIN_AGE + rand() % (CHILD_AGE_LIMIT - MIN_AGE);
-        g_info.seat_count = 2;  // Adult + child = 2 seats
+        g_info.seat_count = 2;  /* Adult + child = 2 seats */
         
-        // Adult with child cannot have a bike TODO: CHECK IF OKAY WITH MGR.WOJTAS
+        /* Adult with child cannot have a bike (for simplicity) */
         g_info.has_bike = false;
     } else {
         g_info.child_age = 0;
         g_info.seat_count = 1;  /* Just the adult */
     }
     
-    // No assigned bus yet
+    /* VIP passengers (and their children) already have tickets */
+    g_info.has_ticket = g_info.is_vip;
+    
+    /* No assigned bus yet */
     g_info.assigned_bus = -1;
 }
 
+/*============================================================================
+ * TICKET OFFICE INTERACTION
+ *============================================================================*/
 
 static int purchase_ticket(shm_data_t *shm) {
-    // Mark as in office
+    /* Mark as in office */
     sem_lock(SEM_SHM_MUTEX);
     shm->passengers_in_office++;
     sem_unlock(SEM_SHM_MUTEX);
@@ -171,24 +169,35 @@ static int purchase_ticket(shm_data_t *shm) {
                  g_info.pid, g_info.age,
                  g_info.has_child_with ? ", with child" : "");
     
-    // Prepare ticket request
+    /* Prepare ticket request */
     ticket_msg_t request;
     memset(&request, 0, sizeof(request));
     request.mtype = MSG_TICKET_REQUEST;
     request.passenger = g_info;
     request.approved = false;
     
-    // Send request to ticket office
+    /* Backpressure: limit outstanding ticket requests to avoid msg queue deadlock */
+    if (sem_lock(SEM_TICKET_QUEUE_SLOTS) == -1) {
+        /* IPC removed - simulation ending */
+        sem_lock(SEM_SHM_MUTEX);
+        shm->passengers_in_office--;
+        sem_unlock(SEM_SHM_MUTEX);
+        return 0;
+    }
+
+    /* Send request to ticket office */
     if (msg_send_ticket(&request) == -1) {
         log_passenger(LOG_ERROR, "PID %d: Failed to send ticket request", g_info.pid);
         
+        sem_unlock(SEM_TICKET_QUEUE_SLOTS);
+
         sem_lock(SEM_SHM_MUTEX);
         shm->passengers_in_office--;
         sem_unlock(SEM_SHM_MUTEX);
         return 0;
     }
     
-    // Wait for response mtype is our PID
+    /* Wait for response (mtype = our PID) */
     ticket_msg_t response;
     ssize_t ret = msg_recv_ticket(&response, g_info.pid, 0);
     
@@ -221,25 +230,36 @@ static int purchase_ticket(shm_data_t *shm) {
     }
 }
 
+/*============================================================================
+ * STATION ENTRY
+ *============================================================================*/
 
 static int enter_station(shm_data_t *shm) {
-    // Check if station is open
+    /* Check if station is open */
     sem_lock(SEM_SHM_MUTEX);
     int station_open = shm->station_open;
     sem_unlock(SEM_SHM_MUTEX);
     
     if (!station_open) {
-        log_passenger(LOG_WARN, "PID %d: Station is closed, waiting...", g_info.pid);
+        /* Station closed means end of simulation; do not block on SEM_STATION_ENTRY */
+        log_passenger(LOG_WARN, "PID %d: Station is closed, cannot enter", g_info.pid);
+        return 0;
     }
     
-    // Wait on station entry semaphore
-    sem_lock(SEM_STATION_ENTRY);
+    /* Wait on station entry semaphore */
+    if (sem_lock(SEM_STATION_ENTRY) == -1) {
+        /* IPC removed - simulation ending */
+        return 0;
+    }
     
-    sem_lock(SEM_SHM_MUTEX);
+    if (sem_lock(SEM_SHM_MUTEX) == -1) {
+        sem_unlock(SEM_STATION_ENTRY);
+        return 0;
+    }
     station_open = shm->station_open;
     
     if (station_open) {
-        // Count all people entering (adult + child if present)
+        /* Count all people entering (adult + child if present) */
         shm->passengers_waiting += g_info.seat_count;
         sem_unlock(SEM_SHM_MUTEX);
         
@@ -262,9 +282,12 @@ static int enter_station(shm_data_t *shm) {
     }
 }
 
+/*============================================================================
+ * BOARDING
+ *============================================================================*/
 
 static int attempt_boarding(shm_data_t *shm) {
-    // Find active bus
+    /* Find active bus */
     sem_lock(SEM_SHM_MUTEX);
     int active_bus = shm->active_bus_id;
     int boarding_allowed = shm->boarding_allowed;
@@ -280,25 +303,34 @@ static int attempt_boarding(shm_data_t *shm) {
                  g_info.pid, active_bus, g_info.seat_count,
                  g_info.seat_count > 1 ? "s" : "");
     
-    // Prepare boarding request
+    /* Prepare boarding request - VIP passengers use priority message type */
     boarding_msg_t request;
     memset(&request, 0, sizeof(request));
-    request.mtype = MSG_BOARD_REQUEST;
+    request.mtype = g_info.is_vip ? MSG_BOARD_REQUEST_VIP : MSG_BOARD_REQUEST;
     request.passenger = g_info;
     request.bus_id = active_bus;
     request.approved = false;
     
-    // Send request to driver
+    /* Backpressure: limit outstanding boarding requests to avoid msg queue deadlock */
+    if (sem_lock(SEM_BOARDING_QUEUE_SLOTS) == -1) {
+        /* IPC removed - simulation ending */
+        return -1;
+    }
+
+    /* Send request to driver */
     if (msg_send_boarding(&request) == -1) {
         log_passenger(LOG_ERROR, "PID %d: Failed to send boarding request", g_info.pid);
+        sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
         return -1;
     }
     
-    // Wait for response mtype is our PID
+    /* Wait for response (mtype = our PID) */
     boarding_msg_t response;
     ssize_t ret = msg_recv_boarding(&response, g_info.pid, 0);
     
     if (ret == -1) {
+        /* Failed to receive response - unlock semaphore before returning */
+        sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
         if (errno == EINTR || errno == EIDRM) {
             return -1;
         }
@@ -306,10 +338,13 @@ static int attempt_boarding(shm_data_t *shm) {
         return -1;
     }
     
+    /* Response received - unlock semaphore (request processed) */
+    sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
+    
     if (response.approved) {
         g_info.assigned_bus = response.bus_id;
         
-        // Signal child thread that we boarded
+        /* Signal child thread that we boarded */
         pthread_mutex_lock(&g_board_mutex);
         g_adult_boarded = 1;
         pthread_cond_signal(&g_board_cond);
@@ -329,48 +364,59 @@ static int attempt_boarding(shm_data_t *shm) {
         
         if (strstr(response.reason, "capacity") != NULL ||
             strstr(response.reason, "not at station") != NULL) {
-            return -1;  // Wait for next bus 
+            return -1;  /* Wait for next bus */
         }
         return 0;
     }
 }
 
+/*============================================================================
+ * MAIN FUNCTION
+ *============================================================================*/
 
 int main(void) {
-    // Seed random number generator uniquely for this process
+    /* Seed random number generator uniquely for this process */
     srand(time(NULL) ^ getpid() ^ (getpid() << 16));
     
+    /* Setup signal handlers */
     setup_signals();
     
-    // Initialize passenger attributes
+    /* Initialize passenger attributes */
     init_passenger();
     
-    printf("[PASSENGER] PID %d started (Age=%d, VIP=%s, Bike=%s",
-           g_info.pid, g_info.age,
-           g_info.is_vip ? "YES" : "NO",
-           g_info.has_bike ? "YES" : "NO");
-    if (g_info.has_child_with) {
-        printf(", WITH CHILD age=%d", g_info.child_age);
-    }
-    printf(")\n");
-    fflush(stdout);
+    /* Check log mode - only print to stdout if not minimal */
+    const char *log_mode = getenv("BUS_LOG_MODE");
+    int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
     
-    // Attach to existing IPC resources.
+    if (!is_minimal) {
+        printf("[PASSENGER] PID %d started (Age=%d, VIP=%s, Bike=%s",
+               g_info.pid, g_info.age,
+               g_info.is_vip ? "YES" : "NO",
+               g_info.has_bike ? "YES" : "NO");
+        if (g_info.has_child_with) {
+            printf(", WITH CHILD age=%d", g_info.child_age);
+        }
+        printf(")\n");
+        fflush(stdout);
+    }
+    
+    /* Attach to existing IPC resources */
     if (ipc_attach_all() != 0) {
         fprintf(stderr, "[PASSENGER %d] Failed to attach to IPC resources\n", g_info.pid);
         exit(EXIT_FAILURE);
     }
     
+    /* Get shared memory pointer */
     shm_data_t *shm = ipc_get_shm();
     if (shm == NULL) {
         fprintf(stderr, "[PASSENGER %d] Failed to get shared memory\n", g_info.pid);
         exit(EXIT_FAILURE);
     }
     
-    // Checking if simulation is running.
+    /* Check if simulation is still running and station is open */
     sem_lock(SEM_SHM_MUTEX);
     int running = shm->simulation_running;
-    shm->total_passengers_created++;
+    int station_open = shm->station_open;
     sem_unlock(SEM_SHM_MUTEX);
     
     if (!running) {
@@ -378,58 +424,112 @@ int main(void) {
         ipc_detach_all();
         return 0;
     }
+
+    /* If station already closed (SIGUSR2 ends simulation), exit early */
+    if (!station_open) {
+        log_passenger(LOG_INFO, "PID %d: Station closed on arrival - exiting", g_info.pid);
+        /* Don't count as left_early since they never entered the counting (created not incremented yet) */
+        ipc_detach_all();
+        return 0;
+    }
     
-    log_passenger(LOG_INFO, "PID %d (Age=%d, VIP=%s, Bike=%s%s): Arrived at station",
-                 g_info.pid, g_info.age,
-                 g_info.is_vip ? "YES" : "NO",
-                 g_info.has_bike ? "YES" : "NO",
-                 g_info.has_child_with ? ", with child" : "");
+    if (g_info.has_child_with) {
+        log_passenger(LOG_INFO, "PID %d (Adult age=%d, Child age=%d, VIP=%s): Arrived at station",
+                     g_info.pid, g_info.age, g_info.child_age,
+                     g_info.is_vip ? "YES" : "NO");
+    } else {
+        log_passenger(LOG_INFO, "PID %d (Age=%d, VIP=%s, Bike=%s): Arrived at station",
+                     g_info.pid, g_info.age,
+                     g_info.is_vip ? "YES" : "NO",
+                     g_info.has_bike ? "YES" : "NO");
+    }
     
-    // Start thread for child if adult has child.
+    /* === STEP 0: Start child thread if this adult has a child === */
     if (start_child_thread() != 0) {
         log_passenger(LOG_ERROR, "PID %d: Failed to start child thread", g_info.pid);
         g_info.has_child_with = false;
         g_info.seat_count = 1;
     }
     
-    // Buy ticket if not vip
+    /* Count as created now (before ticket purchase) so tickets_issued <= created always holds */
+    sem_lock(SEM_SHM_MUTEX);
+    shm->total_passengers_created += g_info.seat_count;
+    shm->adults_created += 1;
+    if (g_info.has_child_with) {
+        shm->children_created += 1;
+    }
+    if (g_info.is_vip) {
+        shm->vip_people_created += g_info.seat_count;
+    }
+    sem_unlock(SEM_SHM_MUTEX);
+    
+    /* === STEP 1: Purchase ticket if not VIP === */
     if (!g_info.is_vip) {
         if (!purchase_ticket(shm)) {
             log_passenger(LOG_ERROR, "PID %d: Could not obtain ticket, leaving", g_info.pid);
+            sem_lock(SEM_SHM_MUTEX);
+            shm->passengers_left_early += g_info.seat_count;
+            sem_unlock(SEM_SHM_MUTEX);
             wait_for_child_thread();
             ipc_detach_all();
             return 1;
         }
     } else {
-        log_passenger(LOG_INFO, "PID %d: VIP passenger - skipping ticket office", g_info.pid);
+        if (g_info.has_child_with) {
+            log_passenger(LOG_INFO, "PID %d: VIP passenger with child - both skip ticket office", g_info.pid);
+        } else {
+            log_passenger(LOG_INFO, "PID %d: VIP passenger - skipping ticket office", g_info.pid);
+        }
     }
     
-    // Entering stations
-    int enter_attempts = 0;
-    while (!enter_station(shm) && g_running && enter_attempts < 10) {
-        enter_attempts++;
-        sleep(1);
-    }
+    /* Check if station closed while buying ticket */
+    sem_lock(SEM_SHM_MUTEX);
+    int station_closed_now = shm->station_closed;
+    sem_unlock(SEM_SHM_MUTEX);
     
-    if (enter_attempts >= 10) {
-        log_passenger(LOG_ERROR, "PID %d: Could not enter station, leaving", g_info.pid);
+    if (station_closed_now) {
+        log_passenger(LOG_INFO, "PID %d: Station closed while buying ticket, leaving", g_info.pid);
+        sem_lock(SEM_SHM_MUTEX);
+        shm->passengers_left_early += g_info.seat_count;
+        sem_unlock(SEM_SHM_MUTEX);
         wait_for_child_thread();
         ipc_detach_all();
         return 1;
     }
     
-    // Boarding attempts
+    /* === STEP 2: Enter station === */
+    int enter_attempts = 0;
+    while (!enter_station(shm) && g_running && enter_attempts < 10) {
+        enter_attempts++;
+        if (!log_is_perf_mode()) {
+            sleep(1);
+        }
+    }
+    
+    if (enter_attempts >= 10) {
+        log_passenger(LOG_ERROR, "PID %d: Could not enter station, leaving", g_info.pid);
+        sem_lock(SEM_SHM_MUTEX);
+        shm->passengers_left_early += g_info.seat_count;
+        sem_unlock(SEM_SHM_MUTEX);
+        wait_for_child_thread();
+        ipc_detach_all();
+        return 1;
+    }
+    
+    /* === STEP 3: Attempt to board === */
     int boarded = 0;
     int board_attempts = 0;
     int max_attempts = 20;
     
     while (!boarded && g_running && board_attempts < max_attempts) {
-        // Check if simulation is still running
+        /* Check if simulation is still running or boarding is blocked */
         sem_lock(SEM_SHM_MUTEX);
         running = shm->simulation_running;
+        int boarding_allowed = shm->boarding_allowed;
         sem_unlock(SEM_SHM_MUTEX);
         
-        if (!running) {
+        if (!running || !boarding_allowed) {
+            log_passenger(LOG_INFO, "PID %d: Boarding no longer allowed, leaving station", g_info.pid);
             break;
         }
         
@@ -441,7 +541,9 @@ int main(void) {
             board_attempts++;
             log_passenger(LOG_INFO, "PID %d: Waiting for next bus (attempt %d/%d)",
                          g_info.pid, board_attempts, max_attempts);
-            sleep(2);
+            if (!log_is_perf_mode()) {
+                sleep(2);
+            }
         } else {
             board_attempts++;
             if (board_attempts >= 3) {
@@ -449,11 +551,13 @@ int main(void) {
                              g_info.pid, board_attempts);
                 break;
             }
-            sleep(1);
+            if (!log_is_perf_mode()) {
+                sleep(1);
+            }
         }
     }
     
-    // Complete yourney or exit
+    /* === STEP 4: Complete journey or exit === */
     if (boarded) {
         if (g_info.has_child_with) {
             log_passenger(LOG_INFO, "PID %d (Adult age=%d + Child age=%d): Journey complete on bus %d",
@@ -466,24 +570,28 @@ int main(void) {
         log_passenger(LOG_WARN, "PID %d: Could not board any bus, leaving station",
                      g_info.pid);
         
-        // Decrement waiting count for all people
+        /* Decrement waiting count and mark as left early */
         sem_lock(SEM_SHM_MUTEX);
         shm->passengers_waiting -= g_info.seat_count;
         if (shm->passengers_waiting < 0) {
             shm->passengers_waiting = 0;
         }
+        shm->passengers_left_early += g_info.seat_count;
         sem_unlock(SEM_SHM_MUTEX);
     }
     
-    // Wait for child thread to finish
+    /* Wait for child thread to finish */
     wait_for_child_thread();
     
-    // Cleanup
+    /* Cleanup */
     ipc_detach_all();
     
-    printf("[PASSENGER] PID %d terminated (boarded=%s%s)\n",
-           g_info.pid, boarded ? "YES" : "NO",
-           g_info.has_child_with ? ", with child" : "");
+    /* Use the same log_mode and is_minimal variables defined at the start of main() */
+    if (!is_minimal) {
+        printf("[PASSENGER] PID %d terminated (boarded=%s%s)\n",
+               g_info.pid, boarded ? "YES" : "NO",
+               g_info.has_child_with ? ", with child" : "");
+    }
     return boarded ? 0 : 1;
 }
 

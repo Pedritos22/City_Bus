@@ -11,13 +11,12 @@
 #include <errno.h>
 #include <unistd.h>
 
-static int g_shmid = -1;            // Shared memory ID 
-static int g_semid = -1;            // Semaphore set ID 
-static int g_msgid_ticket = -1;     // Ticket message queue ID 
-static int g_msgid_boarding = -1;   // Boarding message queue ID 
-static int g_msgid_dispatch = -1;   // Dispatcher message queue ID 
-static shm_data_t *g_shm = NULL;    // Shared memory pointer 
-
+static int g_shmid = -1;
+static int g_semid = -1;
+static int g_msgid_ticket = -1;
+static int g_msgid_boarding = -1;
+static int g_msgid_dispatch = -1;
+static shm_data_t *g_shm = NULL;
 
 #if defined(__linux__)
 union semun {
@@ -27,11 +26,8 @@ union semun {
     struct seminfo *__buf;
 };
 #elif defined(__APPLE__)
-// macOS defines this in sys/sem.h !!!
 #endif
 
-
-// Permissions set to 0600 (owner read/write only) for min access.
 int ipc_create_all(void) {
     g_shmid = shmget(SHM_KEY, sizeof(shm_data_t), IPC_CREAT | 0600);
     if (g_shmid == -1) {
@@ -47,7 +43,6 @@ int ipc_create_all(void) {
     }
 
     memset(g_shm, 0, sizeof(shm_data_t));
-
     g_semid = semget(SEM_KEY, SEM_COUNT, IPC_CREAT | 0600);
     if (g_semid == -1) {
         perror("ipc_create_all: semget failed");
@@ -55,7 +50,6 @@ int ipc_create_all(void) {
     }
 
     union semun arg;
-    
     arg.val = 1;
     if (semctl(g_semid, SEM_SHM_MUTEX, SETVAL, arg) == -1) {
         perror("ipc_create_all: semctl SEM_SHM_MUTEX failed");
@@ -89,12 +83,23 @@ int ipc_create_all(void) {
     }
     
     arg.val = 1;
-    if (semctl(g_semid, SEM_TICKET_OFFICE_0, SETVAL, arg) == -1) {
-        perror("ipc_create_all: semctl SEM_TICKET_OFFICE_0 failed");
+    for (int i = 0; i < TICKET_OFFICES; i++) {
+        int sem_idx = SEM_TICKET_OFFICE(i);
+        if (semctl(g_semid, sem_idx, SETVAL, arg) == -1) {
+            fprintf(stderr, "ipc_create_all: semctl SEM_TICKET_OFFICE_%d failed\n", i);
+            perror("semctl");
+            return -1;
+        }
+    }
+
+    arg.val = MAX_TICKET_QUEUE_REQUESTS;
+    if (semctl(g_semid, SEM_TICKET_QUEUE_SLOTS, SETVAL, arg) == -1) {
+        perror("ipc_create_all: semctl SEM_TICKET_QUEUE_SLOTS failed");
         return -1;
     }
-    if (semctl(g_semid, SEM_TICKET_OFFICE_1, SETVAL, arg) == -1) {
-        perror("ipc_create_all: semctl SEM_TICKET_OFFICE_1 failed");
+    arg.val = MAX_BOARDING_QUEUE_REQUESTS;
+    if (semctl(g_semid, SEM_BOARDING_QUEUE_SLOTS, SETVAL, arg) == -1) {
+        perror("ipc_create_all: semctl SEM_BOARDING_QUEUE_SLOTS failed");
         return -1;
     }
 
@@ -119,9 +124,7 @@ int ipc_create_all(void) {
     return 0;
 }
 
-
 int ipc_attach_all(void) {
-
     g_shmid = shmget(SHM_KEY, sizeof(shm_data_t), 0600);
     if (g_shmid == -1) {
         perror("ipc_attach_all: shmget failed");
@@ -162,7 +165,6 @@ int ipc_attach_all(void) {
     return 0;
 }
 
-
 void ipc_detach_all(void) {
     if (g_shm != NULL && g_shm != (void *)-1) {
         if (shmdt(g_shm) == -1) {
@@ -172,40 +174,48 @@ void ipc_detach_all(void) {
     }
 }
 
-
 void ipc_cleanup_all(void) {
-
     if (g_shmid != -1) {
         if (shmctl(g_shmid, IPC_RMID, NULL) == -1) {
-            perror("ipc_cleanup_all: shmctl IPC_RMID failed");
+            if (errno != EINVAL && errno != EIDRM) {
+                perror("ipc_cleanup_all: shmctl IPC_RMID failed");
+            }
         }
         g_shmid = -1;
     }
 
     if (g_semid != -1) {
         if (semctl(g_semid, 0, IPC_RMID) == -1) {
-            perror("ipc_cleanup_all: semctl IPC_RMID failed");
+            if (errno != EINVAL && errno != EIDRM) {
+                perror("ipc_cleanup_all: semctl IPC_RMID failed");
+            }
         }
         g_semid = -1;
     }
 
     if (g_msgid_ticket != -1) {
         if (msgctl(g_msgid_ticket, IPC_RMID, NULL) == -1) {
-            perror("ipc_cleanup_all: msgctl ticket IPC_RMID failed");
+            if (errno != EINVAL && errno != EIDRM) {
+                perror("ipc_cleanup_all: msgctl ticket IPC_RMID failed");
+            }
         }
         g_msgid_ticket = -1;
     }
 
     if (g_msgid_boarding != -1) {
         if (msgctl(g_msgid_boarding, IPC_RMID, NULL) == -1) {
-            perror("ipc_cleanup_all: msgctl boarding IPC_RMID failed");
+            if (errno != EINVAL && errno != EIDRM) {
+                perror("ipc_cleanup_all: msgctl boarding IPC_RMID failed");
+            }
         }
         g_msgid_boarding = -1;
     }
 
     if (g_msgid_dispatch != -1) {
         if (msgctl(g_msgid_dispatch, IPC_RMID, NULL) == -1) {
-            perror("ipc_cleanup_all: msgctl dispatch IPC_RMID failed");
+            if (errno != EINVAL && errno != EIDRM) {
+                perror("ipc_cleanup_all: msgctl dispatch IPC_RMID failed");
+            }
         }
         g_msgid_dispatch = -1;
     }
@@ -228,18 +238,20 @@ int ipc_get_semid(void) {
     return g_semid;
 }
 
-void sem_lock(int sem_num) {
+int sem_lock(int sem_num) {
     struct sembuf op;
     op.sem_num = sem_num;
-    op.sem_op = -1;     
-    op.sem_flg = 0;     // Block until available 
+    op.sem_op = -1;
+    op.sem_flg = 0;
 
     if (semop(g_semid, &op, 1) == -1) {
-        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
-            perror("sem_lock: semop failed");
-            exit(EXIT_FAILURE);
+        if (errno == EINTR || errno == EIDRM) {
+            return -1;
         }
+        perror("sem_lock: semop failed");
+        exit(EXIT_FAILURE);
     }
+    return 0;
 }
 
 void sem_unlock(int sem_num) {
@@ -249,30 +261,11 @@ void sem_unlock(int sem_num) {
     op.sem_flg = 0;
 
     if (semop(g_semid, &op, 1) == -1) {
-        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
+        if (errno != EINTR && errno != EIDRM) {
             perror("sem_unlock: semop failed");
             exit(EXIT_FAILURE);
         }
     }
-}
-
-// Try to lock without blocking.
-int sem_trylock(int sem_num) {
-    struct sembuf op;
-    op.sem_num = sem_num;
-    op.sem_op = -1;
-    op.sem_flg = IPC_NOWAIT;    // DONT BLOCK
-
-    if (semop(g_semid, &op, 1) == -1) {
-        if (errno == EAGAIN) {
-            return 0;   // Would bloick
-        }
-        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
-            perror("sem_trylock: semop failed");
-        }
-        return 0;
-    }
-    return 1;   // Lock acquired
 }
 
 int sem_getval(int sem_num) {
