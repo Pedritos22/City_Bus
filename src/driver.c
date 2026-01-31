@@ -202,6 +202,9 @@ static void depart_bus(shm_data_t *shm) {
     if (!log_is_perf_mode()) {
         sleep(return_delay);
     }
+    else {
+        usleep(100000);
+    }
     sem_lock(SEM_SHM_MUTEX);
     bus->at_station = true;
     bus->passenger_count = 0;
