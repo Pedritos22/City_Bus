@@ -11,16 +11,10 @@
 #include <time.h>
 #include <sys/msg.h>
 
-/*============================================================================
- * GLOBAL STATE
- *============================================================================*/
 
 static volatile sig_atomic_t g_running = 1;
 static int g_office_id = 0;
 
-/*============================================================================
- * SIGNAL HANDLERS
- *============================================================================*/
 
 static void handle_shutdown(int sig) {
     (void)sig;
@@ -53,9 +47,7 @@ static void setup_signals(void) {
     }
 }
 
-/*============================================================================
- * TICKET PROCESSING
- *============================================================================*/
+
 
 static int validate_passenger(const passenger_info_t *passenger) {
     /* Validate age */
@@ -142,9 +134,7 @@ static int check_shutdown(shm_data_t *shm) {
     return !running || station_closed;
 }
 
-/*============================================================================
- * MAIN FUNCTION
- *============================================================================*/
+
 
 int main(int argc, char *argv[]) {
     /* Parse office ID from command line argument */

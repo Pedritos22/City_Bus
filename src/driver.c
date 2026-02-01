@@ -233,21 +233,37 @@ static int check_shutdown(shm_data_t *shm) {
     return !running || station_closed;
 }
 
+static int g_depart_when_full = 0;  /* Set by --full flag */
+
 static int should_depart(shm_data_t *shm) {
     time_t now = time(NULL);
     
     sem_lock(SEM_SHM_MUTEX);
     time_t depart_time = shm->buses[g_bus_id].departure_time;
     int passengers = shm->buses[g_bus_id].passenger_count;
+    int at_capacity = (passengers >= BUS_CAPACITY);
     sem_unlock(SEM_SHM_MUTEX);
     
-    /* Depart only when scheduled time reached */
-    if (depart_time > 0 && now >= depart_time) {
+    /* Optional: depart immediately when full (--full flag) */
+    if (g_depart_when_full && at_capacity) {
+        log_driver(LOG_INFO, "Bus %d: Departing - at full capacity (%d passengers)", g_bus_id, passengers);
+        return 1;
+    }
+    
+    /* Depart when scheduled time reached AND have passengers */
+    if (depart_time > 0 && now >= depart_time && passengers > 0) {
         log_driver(LOG_INFO, "Bus %d: Departing - scheduled time reached (passengers: %d)", g_bus_id, passengers);
         return 1;
     }
     
-    /* Or early departure signal (SIGUSR1) */
+    /* Debug: log why not departing (only occasionally to avoid spam) */
+    // static int debug_counter = 0;
+    // if (++debug_counter % 500 == 0 && passengers > 0 && depart_time > 0) {
+    //     log_driver(LOG_INFO, "Bus %d: waiting - now=%ld, depart_time=%ld, diff=%ld, passengers=%d",
+    //                g_bus_id, (long)now, (long)depart_time, (long)(depart_time - now), passengers);
+    // }
+    
+    /* Early departure signal (SIGUSR1) with passengers */
     if (g_early_departure && passengers > 0) {
         log_driver(LOG_INFO, "Bus %d: Departing early with %d passengers (SIGUSR1)", g_bus_id, passengers);
         g_early_departure = 0;
@@ -264,6 +280,12 @@ int main(int argc, char *argv[]) {
     
     const char *log_mode = getenv("BUS_LOG_MODE");
     int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
+    
+    /* Check for --full flag (depart when full) */
+    const char *full_depart = getenv("BUS_FULL_DEPART");
+    if (full_depart && (strcmp(full_depart, "1") == 0 || strcasecmp(full_depart, "true") == 0)) {
+        g_depart_when_full = 1;
+    }
     
     if (!is_minimal) {
         printf("[DRIVER %d] Starting (PID=%d)\n", g_bus_id, getpid());
@@ -377,10 +399,7 @@ int main(int argc, char *argv[]) {
         }
         if (ret > 0) {
             process_boarding_request(shm, &request);
-            /* Only release slot if below cap (prevents ERANGE when value would exceed SEMVMX) */
-            if (sem_getval(SEM_BOARDING_QUEUE_SLOTS) < MAX_BOARDING_QUEUE_REQUESTS) {
-                sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
-            }
+            /* Passenger unlocks SEM_BOARDING_QUEUE_SLOTS after receiving response */
             if (log_is_perf_mode() && should_depart(shm)) {
                 sem_lock(SEM_SHM_MUTEX);
                 int next_bus = -1;

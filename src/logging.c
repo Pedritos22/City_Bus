@@ -81,6 +81,9 @@ static const char* level_to_string(log_level_t level) {
     }
 }
 
+#define FLOCK_RETRY_US  2000   /* 2ms between retries */
+#define FLOCK_RETRIES   25     /* ~50ms max wait then give up */
+
 static void write_log_entry(const char *filename, const char *entry) {
     FILE *f = fopen(filename, "a");
     if (f == NULL) {
@@ -88,18 +91,23 @@ static void write_log_entry(const char *filename, const char *entry) {
         return;
     }
 
-    /* Retry flock on EINTR (signal interruption) */
-    while (flock(fileno(f), LOCK_EX) == -1) {
+    int fd = fileno(f);
+    int retries = FLOCK_RETRIES;
+    while (flock(fd, LOCK_EX | LOCK_NB) == -1) {
         if (errno == EINTR) {
             continue;
         }
+        if (errno == EWOULDBLOCK && retries-- > 0) {
+            usleep(FLOCK_RETRY_US);
+            continue;
+        }
         fclose(f);
-        return;
+        return;  /* avoid blocking thousands of processes on one log file */
     }
 
     fprintf(f, "%s\n", entry);
     fflush(f);
-    flock(fileno(f), LOCK_UN);
+    flock(fd, LOCK_UN);
 
     fclose(f);
 }
@@ -139,7 +147,16 @@ void log_event(const char *filename, log_level_t level, const char *format, ...)
              timestamp, level_to_string(level), getpid(), message);
 
     write_log_entry(filename, entry);
-    if (g_log_mode == LOG_MODE_VERBOSE || level >= LOG_WARN) {
+    /* stdout: verbose=all, summary=WARN+, minimal=ERROR only */
+    int print_to_stdout = 0;
+    if (g_log_mode == LOG_MODE_VERBOSE) {
+        print_to_stdout = 1;
+    } else if (g_log_mode == LOG_MODE_SUMMARY && level >= LOG_WARN) {
+        print_to_stdout = 1;
+    } else if (g_log_mode == LOG_MODE_MINIMAL && level >= LOG_ERROR) {
+        print_to_stdout = 1;
+    }
+    if (print_to_stdout) {
         printf("%s\n", entry);
         fflush(stdout);
     }

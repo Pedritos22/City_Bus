@@ -131,7 +131,7 @@ static void init_shared_state(shm_data_t *shm) {
         shm->driver_pids[i] = 0;
     }
     
-    shm->active_bus_id = -1;
+    shm->active_bus_id = 0;  /* Bus 0 starts as active */
     
     /* Initialize ticket offices */
     for (int i = 0; i < TICKET_OFFICES; i++) {

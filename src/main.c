@@ -263,30 +263,42 @@ static void terminate_children(void) {
         kill(g_dispatcher_pid, SIGTERM);
     }
     printf("[MAIN] Waiting for children to exit gracefully...\n");
-    sleep(3);
+    sleep(2);
     reap_children();
+    /* SIGKILL all that might still be alive */
     for (int i = 0; i < g_passenger_count; i++) {
         if (g_passenger_pids[i] > 0) {
             kill(g_passenger_pids[i], SIGKILL);
-            waitpid(g_passenger_pids[i], NULL, 0);
         }
     }
     g_passenger_count = 0;
     for (int i = 0; i < TICKET_OFFICES; i++) {
         if (g_ticket_office_pids[i] > 0) {
             kill(g_ticket_office_pids[i], SIGKILL);
-            waitpid(g_ticket_office_pids[i], NULL, 0);
         }
     }
     for (int i = 0; i < MAX_BUSES; i++) {
         if (g_driver_pids[i] > 0) {
             kill(g_driver_pids[i], SIGKILL);
-            waitpid(g_driver_pids[i], NULL, 0);
         }
     }
     if (g_dispatcher_pid > 0) {
         kill(g_dispatcher_pid, SIGKILL);
-        waitpid(g_dispatcher_pid, NULL, 0);
+    }
+    /* Reap all children in one loop*/
+    {
+        int status;
+        pid_t pid;
+        while (1) {
+            pid = waitpid(-1, &status, 0);
+            if (pid > 0) {
+                if (pid == g_dispatcher_pid) g_dispatcher_pid = 0;
+                continue;
+            }
+            if (pid == -1 && errno == ECHILD) break;
+            if (pid == -1 && errno == EINTR) continue;
+            break;
+        }
     }
 }
 
@@ -374,9 +386,15 @@ static void apply_cli_options(int argc, char *argv[]) {
             setenv("BUS_PERF_MODE", "1", 1);
             continue;
         }
+        if (strcmp(arg, "--full") == 0) {
+            /* Depart when bus is full (instead of waiting for scheduled time) */
+            setenv("BUS_FULL_DEPART", "1", 1);
+            continue;
+        }
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             printf("Usage: ./main [--log=verbose|summary|minimal] [--summary] [--quiet|-q]\n");
             printf("             [--perf]  (disable simulated sleeps for performance testing)\n");
+            printf("             [--full]  (depart when bus is full, don't wait for scheduled time)\n");
             exit(0);
         }
     }
