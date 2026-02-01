@@ -42,12 +42,10 @@ static void setup_signals(void) {
     if (sigaction(SIGTERM, &sa, NULL) == -1) perror("sigaction SIGTERM");
 }
 
-/*============================================================================
- * CHILD THREAD
- * 
- * The child is implemented as a thread within the adult's process.
- * This guarantees the child cannot board without adult supervision.
- *============================================================================*/
+
+/**
+ * Child thread handling.
+ */
 
 static void* child_thread_func(void *arg) {
     int child_age = *(int*)arg;
@@ -109,9 +107,6 @@ static void wait_for_child_thread(void) {
     pthread_join(g_child_thread, NULL);
 }
 
-/*============================================================================
- * PASSENGER INITIALIZATION
- *============================================================================*/
 
 static void init_passenger(void) {
     g_info.pid = getpid();
@@ -151,9 +146,6 @@ static void init_passenger(void) {
     g_info.assigned_bus = -1;
 }
 
-/*============================================================================
- * TICKET OFFICE INTERACTION
- *============================================================================*/
 
 static int purchase_ticket(shm_data_t *shm) {
     /* Mark as in office */
@@ -226,9 +218,6 @@ static int purchase_ticket(shm_data_t *shm) {
     }
 }
 
-/*============================================================================
- * STATION ENTRY
- *============================================================================*/
 
 static int enter_station(shm_data_t *shm) {
     /* Check if station is open */
@@ -278,9 +267,6 @@ static int enter_station(shm_data_t *shm) {
     }
 }
 
-/*============================================================================
- * BOARDING
- *============================================================================*/
 
 static int attempt_boarding(shm_data_t *shm) {
     /* Find active bus */
@@ -365,9 +351,6 @@ static int attempt_boarding(shm_data_t *shm) {
     }
 }
 
-/*============================================================================
- * MAIN FUNCTION
- *============================================================================*/
 
 int main(void) {
     /* Seed random number generator uniquely for this process */

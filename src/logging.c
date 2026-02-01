@@ -84,6 +84,7 @@ static const char* level_to_string(log_level_t level) {
 static void write_log_entry(const char *filename, const char *entry) {
     FILE *f = fopen(filename, "a");
     if (f == NULL) {
+        perror("write_log_entry: fopen failed");
         return;
     }
 

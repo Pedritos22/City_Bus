@@ -227,9 +227,10 @@ static void depart_bus(shm_data_t *shm) {
 static int check_shutdown(shm_data_t *shm) {
     sem_lock(SEM_SHM_MUTEX);
     int running = shm->simulation_running;
+    int station_closed = shm->station_closed;
     sem_unlock(SEM_SHM_MUTEX);
     
-    return !running;
+    return !running || station_closed;
 }
 
 static int should_depart(shm_data_t *shm) {
@@ -238,26 +239,17 @@ static int should_depart(shm_data_t *shm) {
     sem_lock(SEM_SHM_MUTEX);
     time_t depart_time = shm->buses[g_bus_id].departure_time;
     int passengers = shm->buses[g_bus_id].passenger_count;
-    int at_capacity = (passengers >= BUS_CAPACITY);
     sem_unlock(SEM_SHM_MUTEX);
     
-    if (at_capacity) {
-        log_driver(LOG_INFO, "Bus %d: Departing - at capacity", g_bus_id);
-        return 1;
-    }
-    
-    if (log_is_perf_mode() && passengers > 0) {
-        log_driver(LOG_INFO, "Bus %d: Departing - performance mode with %d passengers", g_bus_id, passengers);
-        return 1;
-    }
-    
+    /* Depart only when scheduled time reached */
     if (depart_time > 0 && now >= depart_time) {
         log_driver(LOG_INFO, "Bus %d: Departing - scheduled time reached (passengers: %d)", g_bus_id, passengers);
         return 1;
     }
     
+    /* Or early departure signal (SIGUSR1) */
     if (g_early_departure && passengers > 0) {
-        log_driver(LOG_INFO, "Bus %d: Departing early with %d passengers", g_bus_id, passengers);
+        log_driver(LOG_INFO, "Bus %d: Departing early with %d passengers (SIGUSR1)", g_bus_id, passengers);
         g_early_departure = 0;
         return 1;
     }
@@ -317,10 +309,11 @@ int main(int argc, char *argv[]) {
         sem_lock(SEM_SHM_MUTEX);
         int at_station = shm->buses[g_bus_id].at_station;
         int boarding_open = shm->buses[g_bus_id].boarding_open;
+        int am_active = (shm->active_bus_id == g_bus_id);
         sem_unlock(SEM_SHM_MUTEX);
         
-        /* Any driver at station with boarding open can receive (multiple consumers, no deadlock) */
-        if (!at_station || !boarding_open) {
+        /* Only the active bus receives passengers; others wait */
+        if (!at_station || !boarding_open || !am_active) {
             usleep(log_is_perf_mode() ? 10000 : 100000);
             continue;
         }
