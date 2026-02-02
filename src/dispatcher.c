@@ -23,7 +23,7 @@ static volatile sig_atomic_t g_block_station = 0;
 static void handle_sigusr1(int sig) {
     (void)sig;
     g_early_depart = 1;
-    const char msg[] = "\n[DISPATCHER] SIGUSR1 received - early departure enabled\n";
+    const char msg[] = COLOR_YELLOW "\n[DISPATCHER] SIGUSR1 received - early departure enabled\n" COLOR_RESET;
     write(STDOUT_FILENO, msg, sizeof(msg) - 1);
 }
 
@@ -34,7 +34,7 @@ static void handle_sigusr1(int sig) {
 static void handle_sigusr2(int sig) {
     (void)sig;
     g_block_station = 1;
-    const char msg[] = "\n[DISPATCHER] SIGUSR2 received - station CLOSED (end simulation)\n";
+    const char msg[] = COLOR_RED "\n[DISPATCHER] SIGUSR2 received - station CLOSED (end simulation)\n" COLOR_RESET;
     write(STDOUT_FILENO, msg, sizeof(msg) - 1);
 }
 
@@ -45,7 +45,7 @@ static void handle_sigusr2(int sig) {
 static void handle_shutdown(int sig) {
     (void)sig;
     g_running = 0;
-    const char msg[] = "\n[DISPATCHER] Shutdown signal received\n";
+    const char msg[] = COLOR_RED "\n[DISPATCHER] Shutdown signal received\n" COLOR_RESET;
     write(STDOUT_FILENO, msg, sizeof(msg) - 1);
 }
 
@@ -176,7 +176,7 @@ static void process_signals(shm_data_t *shm) {
             sem_unlock(SEM_SHM_MUTEX);
 
             log_dispatcher(LOG_WARN, "Station CLOSED - no new entries, waiting passengers can still board");
-            printf("[DISPATCHER] SIGUSR2 processed - station closed, waiting passengers will be transported\n");
+            printf(COLOR_RED "[DISPATCHER] SIGUSR2 processed - station closed, waiting passengers will be transported\n" COLOR_RESET);
             fflush(stdout);
 
             /* Wake up processes blocked on station entry, they will see station_open=false and exit.*/
@@ -298,7 +298,8 @@ static void print_status(shm_data_t *shm) {
     int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
     
     if (is_minimal) {
-        printf("STATUS: created=%d transported=%d waiting=%d in_office=%d tickets=%d\n",
+        printf(COLOR_CYAN "STATUS" COLOR_RESET ": created=%d " 
+               COLOR_GREEN "transported=%d" COLOR_RESET " waiting=%d in_office=%d tickets=%d\n",
                created, transported, waiting, in_office, tickets);
         fflush(stdout);
     } else {
@@ -357,14 +358,14 @@ static void print_final_stats(shm_data_t *shm) {
         log_stats("WARNING: created=%d vs transported+waiting+in_office+on_bus+left_early=%d (diff=%d)", created, sum, created - sum);
     }
 
-    printf("\n========== FINAL STATS ==========\n");
+    printf(COLOR_CYAN "\n========== FINAL STATS ==========\n" COLOR_RESET);
     printf("Created people: %d (adults=%d, children=%d, vip_people=%d)\n", created, adults, children, vip_created);
-    printf("Tickets issued: %d (people covered=%d, denied=%d)\n", tickets, sold_people, denied);
-    printf("Boarded people: %d (vip_people=%d)\n", boarded, boarded_vip);
-    printf("Transported people: %d\n", transported);
-    printf("Left early (station closed): %d\n", left_early);
+    printf(COLOR_GREEN "Tickets issued: %d (people covered=%d, denied=%d)\n" COLOR_RESET, tickets, sold_people, denied);
+    printf(COLOR_GREEN "Boarded people: %d (vip_people=%d)\n" COLOR_RESET, boarded, boarded_vip);
+    printf(COLOR_GREEN "Transported people: %d\n" COLOR_RESET, transported);
+    printf(COLOR_YELLOW "Left early (station closed): %d\n" COLOR_RESET, left_early);
     printf("Remaining: waiting=%d in_office=%d\n", waiting, in_office);
-    printf("================================\n\n");
+    printf(COLOR_CYAN "================================\n\n" COLOR_RESET);
 
     log_dispatcher(LOG_INFO,
         "STATS created=%d adults=%d children=%d vip_people=%d tickets_issued=%d tickets_people=%d denied=%d boarded=%d boarded_vip=%d transported=%d left_early=%d waiting=%d in_office=%d",

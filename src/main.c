@@ -57,7 +57,7 @@ static void handle_shutdown(int sig) {
     (void)sig;
     g_running = 0;
     
-    const char msg[] = "\n[MAIN] Shutdown signal received, terminating...\n";
+    const char msg[] = COLOR_RED "\n[MAIN] Shutdown signal received, terminating...\n" COLOR_RESET;
     write(STDOUT_FILENO, msg, sizeof(msg) - 1);
     
     if (g_dispatcher_pid > 0) {
@@ -251,7 +251,7 @@ static int check_simulation_progress(void) {
     int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
     
     if (!is_minimal) {
-        printf("[MAIN] Progress: %d/%d passengers transported\n", transported, created);
+        printf(COLOR_CYAN "[MAIN] Progress: " COLOR_GREEN "%d/%d" COLOR_RESET " passengers transported\n", transported, created);
     }
     
     if (g_dispatcher_pid == 0) {
@@ -260,7 +260,7 @@ static int check_simulation_progress(void) {
     }
     
     if (stop_spawning && waiting <= 0 && in_office <= 0 && transported >= created) {
-        printf("[MAIN] Drain complete (spawning stopped)\n");
+        printf(COLOR_GREEN "[MAIN] Drain complete (spawning stopped)\n" COLOR_RESET);
     }
     
     return running;
@@ -523,29 +523,18 @@ static void apply_cli_options(int argc, char *argv[]) {
         if (strcmp(arg, "--test4") == 0) { g_test_mode = 4; continue; }
         if (strcmp(arg, "--test5") == 0) { g_test_mode = 5; continue; }
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
-            printf("Usage: ./main [OPTIONS]\n\n");
-            printf("Logging:\n");
-            printf("  --log=verbose|summary|minimal  Set logging level\n");
-            printf("  --summary                      Same as --log=summary\n");
-            printf("  --quiet, -q                    Same as --log=minimal\n\n");
-            printf("Simulation:\n");
-            printf("  --perf       Disable sleeps for performance testing\n");
-            printf("  --full       Depart when bus is full (don't wait for scheduled time)\n\n");
-            printf("Tests (run alongside normal simulation):\n");
-            printf("  --test1      Kill active driver, verify watchdog recovery\n");
-            printf("  --test2      Close station (SIGUSR2), verify drain\n");
-            printf("  --test3      Force early departures (SIGUSR1 x5)\n");
-            printf("  --test4      Kill ticket office, verify continued service\n");
-            printf("  --test5      Stats consistency check\n");
+            printf("Usage: ./main [--log=verbose|summary|minimal] [--summary] [--quiet|-q]\n");
+            printf("             [--perf]  (disable simulated sleeps for performance testing)\n");
+            printf("             [--full]  (depart when bus is full, don't wait for scheduled time)\n");
             exit(0);
         }
     }
 }
 
 int main(int argc, char *argv[]) {
-    printf("========================================\n");
+    printf(COLOR_CYAN "========================================\n");
     printf("   SUBURBAN BUS SIMULATION\n");
-    printf("========================================\n");
+    printf("========================================\n" COLOR_RESET);
 
     apply_cli_options(argc, argv);
 
@@ -628,14 +617,14 @@ int main(int argc, char *argv[]) {
     int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
     
     if (!is_minimal) {
-        printf("\n[MAIN] System initialized. Spawning passengers...\n\n");
-        printf("[MAIN] DISPATCHER_PID=%d\n", g_dispatcher_pid);
-        printf("[MAIN] Send SIGUSR1 to PID %d for early departure\n", g_dispatcher_pid);
-        printf("[MAIN] Send SIGUSR2 to PID %d to CLOSE station (end simulation)\n", g_dispatcher_pid);
-        printf("[MAIN] Send SIGINT (Ctrl+C) to shutdown\n\n");
+        printf(COLOR_GREEN "\n[MAIN] System initialized. Spawning passengers...\n\n" COLOR_RESET);
+        printf(COLOR_CYAN "[MAIN] DISPATCHER_PID=%d\n" COLOR_RESET, g_dispatcher_pid);
+        printf(COLOR_YELLOW "[MAIN] Send SIGUSR1 to PID %d for early departure\n" COLOR_RESET, g_dispatcher_pid);
+        printf(COLOR_RED "[MAIN] Send SIGUSR2 to PID %d to CLOSE station (end simulation)\n" COLOR_RESET, g_dispatcher_pid);
+        printf(COLOR_RED "[MAIN] Send SIGINT (Ctrl+C) to shutdown\n\n" COLOR_RESET);
     } else {
         /* Minimal mode: only print PID */
-        printf("[MAIN] DISPATCHER_PID=%d\n", g_dispatcher_pid);
+        printf(COLOR_CYAN "[MAIN] DISPATCHER_PID=%d\n" COLOR_RESET, g_dispatcher_pid);
     }
     
     /* Also log dispatcher PID for easy grepping */
@@ -694,7 +683,7 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    printf("\n[MAIN] Passenger creation stopped. Monitoring simulation...\n\n");
+    printf(COLOR_YELLOW "\n[MAIN] Passenger creation stopped. Monitoring simulation...\n\n" COLOR_RESET);
     
 
     while (g_running) {
@@ -710,7 +699,7 @@ int main(int argc, char *argv[]) {
         sleep(5);
     }
     
-    printf("\n[MAIN] Simulation complete. Shutting down...\n\n");
+    printf(COLOR_GREEN "\n[MAIN] Simulation complete. Shutting down...\n\n" COLOR_RESET);
     
 
     
@@ -730,9 +719,9 @@ int main(int argc, char *argv[]) {
     ipc_detach_all();
     ipc_cleanup_all();
     
-    printf("\n========================================\n");
+    printf(COLOR_GREEN "\n========================================\n");
     printf("   SIMULATION FINISHED\n");
-    printf("========================================\n");
+    printf("========================================\n" COLOR_RESET);
     printf("Check log files in '%s/' for details:\n", LOG_DIR);
     printf("  - master.log\n");
     printf("  - dispatcher.log\n");

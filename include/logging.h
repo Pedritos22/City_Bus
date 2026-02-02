@@ -10,6 +10,14 @@ typedef enum {
     LOG_DEBUG // DEBUG messages
 } log_level_t;
 
+/* ANSI color codes for pretty stdout output (logs to files stay plain) */
+#define COLOR_RESET "\033[0m"
+#define COLOR_RED   "\033[31m"
+#define COLOR_GREEN "\033[32m"
+#define COLOR_YELLOW "\033[33m"
+#define COLOR_BLUE  "\033[34m"
+#define COLOR_CYAN  "\033[36m"
+
 // Creates log directory if it doesn't exist.
 int log_init(void);
 // Log a formatted event to a specific file.
