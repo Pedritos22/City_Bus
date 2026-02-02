@@ -626,6 +626,112 @@ FUNKCJA attempt_boarding(shm):
         Zwróć -1  // Czekaj na następny autobus
 ```
 
+- Przetwarzanie requestu boardingowego
+
+```
+FUNKCJA process_boarding_request(shm, request):
+    Przygotuj response (mtype=request->passenger.pid)
+    
+    Zablokuj SEM_SHM_MUTEX
+    
+    Jeśli can_board(shm, request, reason) == true:
+        response.approved = true
+        
+        Zwiększ bus->entering_count
+        Zwolnij SEM_SHM_MUTEX
+        
+        Zablokuj entrance_sem (SEM_ENTRANCE_BIKE lub SEM_ENTRANCE_PASSENGER)
+        
+        
+        Zablokuj SEM_SHM_MUTEX
+        Zwiększ bus->passenger_count o seat_count
+        Jeśli ma rower:
+            Zwiększ bus->bike_count
+        Zmniejsz bus->entering_count
+        Zmniejsz shm->passengers_waiting o seat_count
+        Zwiększ shm->boarded_people o seat_count
+        Jeśli VIP:
+            Zwiększ shm->boarded_vip_people o seat_count
+        Zwolnij SEM_SHM_MUTEX
+        
+        Zwolnij entrance_sem
+        
+        Zaloguj sukces (z priorytetem VIP jeśli dotyczy)
+    W przeciwnym razie:
+        response.approved = false
+        response.reason = powód odmowy
+        Zwolnij SEM_SHM_MUTEX
+    
+    Wyślij response (msg_send_boarding_resp)
+```
+
+- Sprawdzenie możliwości wsiadania
+
+```
+FUNKCJA can_board(shm, request, reason):
+    bus = shm->buses[g_bus_id]
+    
+    Jeśli bus->at_station == false:
+        reason = "Bus not at station"
+        Zwróć 0
+    
+    Jeśli bus->boarding_open == false:
+        reason = "Bus boarding not open"
+        Zwróć 0
+    
+    seats_needed = request->passenger.seat_count
+    
+    Jeśli bus->passenger_count + seats_needed > BUS_CAPACITY:
+        reason = "Not enough seats"
+        Zwróć 0
+    
+    Jeśli request->passenger.has_bike I bus->bike_count >= BIKE_CAPACITY:
+        reason = "Bus at bicycle capacity"
+        Zwróć 0
+    
+    Zwróć 1  // Można wsiadać
+```
+
+- Odjazd autobusu
+
+```
+FUNKCJA depart_bus(shm):
+    bus = shm->buses[g_bus_id]
+    
+    Poczekaj aż wejścia są puste (wait_for_entrance_clear)
+    
+    Zablokuj SEM_SHM_MUTEX
+    bus->boarding_open = false
+    bus->at_station = false
+    
+    return_delay = losowa wartość (MIN_RETURN_TIME .. MAX_RETURN_TIME)
+    bus->return_time = time() + return_delay
+    
+    passengers = bus->passenger_count
+    bikes = bus->bike_count
+    
+    Zwiększ shm->passengers_transported o passengers
+    bus->passenger_count = 0
+    bus->bike_count = 0
+    
+    Zwolnij SEM_SHM_MUTEX
+    
+    Zaloguj odjazd
+    
+    sleep(return_delay)  // Symulacja podróży, chyba ze --perf mode
+    
+    Zablokuj SEM_SHM_MUTEX
+    bus->at_station = true
+    bus->boarding_open = true
+    bus->departure_time = time() + BOARDING_INTERVAL
+    
+    Jeśli active_bus_id < 0 LUB active_bus nie jest na stacji:
+        active_bus_id = g_bus_id
+    
+    Zwolnij SEM_SHM_MUTEX
+    
+    Zaloguj powrót
+```
 
 ## Temat 12 – Autobus Podmiejski
 Na dworcu stoi autobus o pojemności P pasażerów, w którym jednocześnie można przewieźć R
