@@ -144,55 +144,55 @@ Dyspozytor (dispatcher.c)
 ## 1. Tworzenie i obsługa plików
 
 ### Tworzenie katalogu logów
-[Tworzenie katalogu przed startem] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L560-L564)
-[Tworzenie w `log_init()`] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/logging.c#L115-L121)
+[Tworzenie katalogu przed startem](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L560-L564)
+[Tworzenie w `log_init()`](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/logging.c#L115-L121)
 
 ### Otwieranie plików logów
 
 
 ### Zapisywanie do plików logów
-[Zapisywanie do plików] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/logging.c#L87-L113)
+[Zapisywanie do plików](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/logging.c#L87-L113)
 
 
 ### Usuwanie starych logów
-[Usuwanie stary logów] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L566-L573)
+[Usuwanie stary logów](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L566-L573)
 
 ---
 
 ## 2. Tworzenie i obsługa procesów
 
 ### fork() i exec() dla dyspozytora
-[Funkcja spawn_dispatcher()] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L89-L106)
-[Wywołanie spawn_dispatcher()] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L577)
+[Funkcja spawn_dispatcher()](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L89-L106)
+[Wywołanie spawn_dispatcher()](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L577)
 
 ### fork() i exec() dla kasy
-[Funkcja spawn_ticket_office] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L108-L123)
-[Pętla tworząca wszystkie kasy] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L592-L598)
+[Funkcja spawn_ticket_office](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L108-L123)
+[Pętla tworząca wszystkie kasy](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L592-L598)
 
 ### fork() i exec() dla kierowcy
-[Funkcja spawn_driver] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L129-L148)
-[Pętla tworząca wszystkich kierowców] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L604-L610)
+[Funkcja spawn_driver](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L129-L148)
+[Pętla tworząca wszystkich kierowców](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L604-L610)
 
 ### fork() i exec() dla pasażera
-[Funkcja spawn passenger] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L150-L166)
-[Pętla tworząca pasazerow] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L659-L684)
+[Funkcja spawn passenger](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L150-L166)
+[Pętla tworząca pasazerow](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L659-L684)
 
 ### Handling procesów potomnych
-[Zakonczenie procesow potomnych] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L269-L373)
+[Zakonczenie procesow potomnych](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L269-L373)
 
 ---
 
 ## 3. Tworzenie i obsługa wątków
-[Funkcje dla child thread] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L47-L105)
-[Przekazanie boardingu Child Thread] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L329-L333)
+[Funkcje dla child thread](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L47-L105)
+[Przekazanie boardingu Child Thread](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L329-L333)
 ---
 
 ## 4. Obsługa sygnałów
 
-[Sygnaly dla dyspozytora] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/dispatcher.c#L19-L98)
-[Sygnaly w mainie] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L56-L87)
-[Sygnaly w ticket_office] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ticket_office.c#L19-L38)
-[Sygnaly w passenger] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L29-L43)
+[Sygnaly dla dyspozytora](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/dispatcher.c#L19-L98)
+[Sygnaly w mainie](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L56-L87)
+[Sygnaly w ticket_office](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ticket_office.c#L19-L38)
+[Sygnaly w passenger](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L29-L43)
 ###
 
 ---
@@ -200,18 +200,18 @@ Dyspozytor (dispatcher.c)
 ## 5. Mechanizmy IPC
 
 ### Tworzenie i inicjalizacja IPC
-[Funkcja ipc_create_all] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L70-L195)
+[Funkcja ipc_create_all](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L70-L195)
 
 ### Cleanup
-[IPC cleanup] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L259-L311)
+[IPC cleanup](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L259-L311)
 
 ### Operacje P() i V() na semaforach
-[Funkcje sem_lock,sem_unlock,sem_getval,sem_setval] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L330-L396)
+[Funkcje sem_lock,sem_unlock,sem_getval,sem_setval](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L330-L396)
 
 ### Dołączenie zasobów do IPC
-[Funkcja ipc_attach_all] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L197-L248)
+[Funkcja ipc_attach_all](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L197-L248)
 ### Odłączenie pamięci współdzielonej
-[Funkcja ipc_detach_all] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L250-L257)
+[Funkcja ipc_detach_all](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L250-L257)
 ---
 
 ### 
@@ -260,6 +260,7 @@ Dyspozytor (dispatcher.c)
 ## Testy - sa one przeprowadzane w tym samym czasie co symulacja. 
 ## Pozwala to sprawdzic czy symulacja sie zawiesza badz ma problem.
 ### 1. Test zabijający jednego z aktywnych kierowców
+[TEST1](https://github.com/Pedritos22/City_Bus/blob/c2df74f59b310ee831d8d59c522343c93a60931d/src/main.c#L380-L398)
 Wywołanie tego testu następuje poprzez wysłanie sygnału SIGKILL do aktywnego kierowcy.
 ```
 $ kill -SIGKILL <PID_KIEROWCA>
@@ -271,6 +272,7 @@ $ ./main --test1
 Po przeprowadzeniu testu program nadal przewozi pasazerow jezeli zostaje przynajmniej jeden aktywny autobus.
 
 ### 2. Test sprawdzający działanie sygnału SIGUSR2
+[TEST2](https://github.com/Pedritos22/City_Bus/blob/c2df74f59b310ee831d8d59c522343c93a60931d/src/main.c#L400-L410)
 Wywołanie tego testu następuje poprzez wysłanie sygnału SIGUSR2 do dispatchera. Użycie:
 ```console
 $ kill -SIGUSR2 <PID_DISPATCHER>
@@ -338,6 +340,7 @@ Remaining: waiting=0 in_office=0
 ================================
 ```
 ### 3. Test sprawdzajacy wielokrotne uzycie sygnalu SIGUSR1
+[TEST3](https://github.com/Pedritos22/City_Bus/blob/c2df74f59b310ee831d8d59c522343c93a60931d/src/main.c#L412-L424)
 Wywołanie tego testu następuje poprzez wysłanie sygnału SIGUSR2 do dispatchera N ilość razy (standardowo ustawione jako 5). Użycie:
 ```console
 $ kill -SIGUSR1 <PID_DISPATCHER>
@@ -349,7 +352,7 @@ $ ./main --test3
 Po wykonaniu busy odjezdzaja jak nalezy z dworca, przetwarzają poprawnie zadanie.
 
 ### 4. Test zabijający jednego z aktywnych ticket offices.
-
+[TEST4](https://github.com/Pedritos22/City_Bus/blob/c2df74f59b310ee831d8d59c522343c93a60931d/src/main.c#L426-L438)
 Wywołanie tego testu następuje poprzez wysłanie sygnału SIGKILL do aktywnego ticket office.
 ```
 $ kill -SIGKILL <PID_KIEROWCA>
@@ -361,6 +364,7 @@ $ ./main --test4
 Po przeprowadzeniu testu program nadal sprzedaje bilety jezeli zostaje przynajmniej jeden aktywny ticket office.
 
 ### 5. Test sprawdzający prawidłowość zapisywanych statystyk
+[TEST5](https://github.com/Pedritos22/City_Bus/blob/c2df74f59b310ee831d8d59c522343c93a60931d/src/main.c#L440-L469)
 Test polega na sprawdzeniu poprawności wszystkich statystyk i wiarygodności danych
 
 ```console
