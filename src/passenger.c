@@ -53,7 +53,7 @@ static void* child_thread_func(void *arg) {
     /* Wait for adult to board */
     pthread_mutex_lock(&g_board_mutex);
     while (!g_adult_boarded && g_running) {
-        /* pthread_cond_wait blocks without busy waiting */
+        /* pthread_cond_wait blocks */
         pthread_cond_wait(&g_board_cond, &g_board_mutex);
     }
     pthread_mutex_unlock(&g_board_mutex);

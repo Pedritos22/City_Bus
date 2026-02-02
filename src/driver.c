@@ -87,7 +87,7 @@ static int can_board(shm_data_t *shm, const boarding_msg_t *request, char *reaso
     return 1;
 }
 
-/* Safeguard: validate boarding request message */
+/* Validate boarding request message */
 static int validate_boarding_request(const boarding_msg_t *request) {
     /* Check mtype is valid boarding request */
     if (request->mtype != MSG_BOARD_REQUEST && request->mtype != MSG_BOARD_REQUEST_VIP) {
@@ -408,7 +408,7 @@ int main(int argc, char *argv[]) {
         boarding_msg_t request;
         ssize_t ret = msg_recv_boarding(&request, -MSG_BOARD_REQUEST, 0);
         if (ret > 0) {
-            /* Safeguard: validate message before processing */
+            /* Validate message before processing */
             if (!validate_boarding_request(&request)) {
                 log_driver(LOG_WARN, "Bus %d: Discarding invalid boarding request", g_bus_id);
                 continue;
