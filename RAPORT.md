@@ -144,197 +144,77 @@ Dyspozytor (dispatcher.c)
 ## 1. Tworzenie i obsługa plików
 
 ### Tworzenie katalogu logów
-- **`src/main.c:453`** - `mkdir(LOG_DIR, 0755)` - tworzenie katalogu przed startem
-- **`src/logging.c:116`** - `mkdir(LOG_DIR, 0755)` - tworzenie w `log_init()`
+[Tworzenie katalogu przed startem] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L560-L564)
+[Tworzenie w `log_init()`] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/logging.c#L115-L121)
 
 ### Otwieranie plików logów
-- **`src/logging.c:88`** - `fopen(filename, "a")` - otwieranie w trybie append w `write_log_entry()`
 
-### Zapisywanie do plików logów z blokadą
-- **`src/logging.c:96-110`** - `flock(fd, LOCK_EX | LOCK_NB)` - blokada wyłączna, non-blocking z retry
-- **`src/logging.c:108`** - `fprintf(f, "%s\n", entry)` - zapis do pliku
-- **`src/logging.c:109`** - `fflush(f)` - wymuszenie zapisu
-- **`src/logging.c:110`** - `flock(fd, LOCK_UN)` - zwolnienie blokady
 
-### Zamykanie plików
-- **`src/logging.c:112`** - `fclose(f)` - zamykanie pliku po zapisie
+### Zapisywanie do plików logów
+[Zapisywanie do plików] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/logging.c#L87-L113)
+
 
 ### Usuwanie starych logów
-- **`src/main.c:460-465`** - `unlink(LOG_MASTER)`, `unlink(LOG_DISPATCHER)`, itd. - usuwanie przed startem
+[Usuwanie stary logów] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L566-L573)
 
 ---
 
 ## 2. Tworzenie i obsługa procesów
 
 ### fork() i exec() dla dyspozytora
-- **`src/main.c:89`** - `fork()` - tworzenie procesu potomnego
-- **`src/main.c:98`** - `execl("./dispatcher", "dispatcher", NULL)` - uruchomienie dispatchera
-- **`src/main.c:469`** - wywołanie `spawn_dispatcher()`
+[Funkcja spawn_dispatcher()] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L89-L106)
+[Wywołanie spawn_dispatcher()] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L577)
 
 ### fork() i exec() dla kasy
-- **`src/main.c:108`** - `fork()` - tworzenie procesu potomnego
-- **`src/main.c:119`** - `execl("./ticket_office", "ticket_office", id_str, NULL)` - uruchomienie kasy
-- **`src/main.c:485-490`** - pętla tworząca wszystkie kasy
+[Funkcja spawn_ticket_office] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L108-L123)
+[Pętla tworząca wszystkie kasy] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L592-L598)
 
 ### fork() i exec() dla kierowcy
-- **`src/main.c:129`** - `fork()` - tworzenie procesu potomnego
-- **`src/main.c:140`** - `execl("./driver", "driver", id_str, NULL)` - uruchomienie kierowcy
-- **`src/main.c:497-502`** - pętla tworząca wszystkich kierowców
+[Funkcja spawn_driver] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L129-L148)
+[Pętla tworząca wszystkich kierowców] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L604-L610)
 
 ### fork() i exec() dla pasażera
-- **`src/main.c:150`** - `fork()` - tworzenie procesu potomnego
-- **`src/main.c:159`** - `execl("./passenger", "passenger", NULL)` - uruchomienie pasażera
-- **`src/main.c:538`** - wywołanie `spawn_passenger()` w pętli głównej
+[Funkcja spawn passenger] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L150-L166)
+[Pętla tworząca pasazerow] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L659-L684)
 
-### Oczekiwanie na zakończenie procesów potomnych
-- **`src/main.c:188-230`** - `reap_children()` - `waitpid(-1, &status, WNOHANG)` - non-blocking wait
-- **`src/main.c:312-325`** - `waitpid(-1, &status, 0)` - blocking wait w `terminate_children()`
-- **`src/main.c:328-371`** - `wait_all_children()` - timeout-based wait z `WNOHANG`
-
-### Zabijanie procesów potomnych przy zakończeniu
-- **`src/main.c:270-287`** - `kill(pid, SIGTERM)` - wysłanie SIGTERM do wszystkich dzieci
-- **`src/main.c:292-310`** - `kill(pid, SIGKILL)` - wymuszenie zakończenia w `terminate_children()`
+### Handling procesów potomnych
+[Zakonczenie procesow potomnych] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L269-L373)
 
 ---
 
 ## 3. Tworzenie i obsługa wątków
-
-### pthread_create() dla dziecka pasażera
-- **`src/passenger.c:80`** - `pthread_create(&g_child_thread, NULL, child_thread_func, &g_info.child_age)` - tworzenie wątku dziecka
-
-### pthread_join() dla dziecka
-- **`src/passenger.c:104`** - `pthread_join(g_child_thread, NULL)` - oczekiwanie na zakończenie wątku
-
-### pthread_mutex_lock()/unlock()
-- **`src/passenger.c:24`** - deklaracja `pthread_mutex_t g_board_mutex = PTHREAD_MUTEX_INITIALIZER`
-- **`src/passenger.c:54`** - `pthread_mutex_lock(&g_board_mutex)` - blokada przed `pthread_cond_wait`
-- **`src/passenger.c:59`** - `pthread_mutex_unlock(&g_board_mutex)` - zwolnienie po `pthread_cond_wait`
-- **`src/passenger.c:98-100`** - `pthread_mutex_lock/unlock` w `wait_for_child_thread()`
-- **`src/passenger.c:330-333`** - `pthread_mutex_lock/unlock` przy sygnalizacji dziecku
-
-### pthread_cond_wait()/signal()
-- **`src/passenger.c:25`** - deklaracja `pthread_cond_t g_board_cond = PTHREAD_COND_INITIALIZER`
-- **`src/passenger.c:57`** - `pthread_cond_wait(&g_board_cond, &g_board_mutex)` - oczekiwanie w wątku dziecka
-- **`src/passenger.c:99`** - `pthread_cond_signal(&g_board_cond)` - sygnalizacja dziecku
-- **`src/passenger.c:332`** - `pthread_cond_signal(&g_board_cond)` - sygnalizacja po wsiadaniu
-
+[Funkcje dla child thread] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L47-L105)
+[Przekazanie boardingu Child Thread] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L329-L333)
 ---
 
 ## 4. Obsługa sygnałów
 
-### sigaction() dla SIGUSR1/SIGUSR2
-- **`src/dispatcher.c:65`** - `sigaction(SIGUSR1, &sa, NULL)` - rejestracja handlera dla early departure
-- **`src/dispatcher.c:72`** - `sigaction(SIGUSR2, &sa, NULL)` - rejestracja handlera dla zamknięcia stacji
-- **`src/main.c:79-80`** - `sigaction(SIGINT/SIGTERM, &sa, NULL)` - rejestracja shutdown handlerów
-- **`src/ticket_office.c:32-36`** - `sigaction(SIGINT/SIGTERM, &sa, NULL)` - rejestracja shutdown handlerów
-- **`src/driver.c:setup_signals()`** - podobnie dla kierowców
-- **`src/passenger.c:setup_signals()`** - podobnie dla pasażerów
-
-### Wysyłanie sygnałów do procesów (kill())
-- **`src/main.c:63`** - `kill(g_dispatcher_pid, SIGTERM)` - w handlerze shutdown
-- **`src/main.c:272`** - `kill(g_passenger_pids[i], SIGTERM)` - zabijanie pasażerów
-- **`src/main.c:277`** - `kill(g_ticket_office_pids[i], SIGTERM)` - zabijanie kas
-- **`src/main.c:282`** - `kill(g_driver_pids[i], SIGTERM)` - zabijanie kierowców
-- **`src/dispatcher.c:151`** - `kill(driver_pid, sig)` - przekazywanie sygnałów do kierowców
-
-### Przekazywanie sygnału SIGUSR1 do kierowców
-- **`src/dispatcher.c:146-158`** - `forward_signal_to_drivers(shm, SIGUSR1)` - funkcja przekazująca sygnał
-- **`src/dispatcher.c:167`** - wywołanie w `process_signals()` po otrzymaniu SIGUSR1
-
-### Obsługa SIGCHLD dla procesów zombie
-- **`src/dispatcher.c:93`** - `sigaction(SIGCHLD, &sa, NULL)` - rejestracja handlera
-- **`src/dispatcher.c:52-54`** - `handle_sigchld()` - pusty handler (SA_NOCLDSTOP)
-- **`src/main.c:83-85`** - podobnie w main.c
+[Sygnaly dla dyspozytora] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/dispatcher.c#L19-L98)
+[Sygnaly w mainie] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L56-L87)
+[Sygnaly w ticket_office] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ticket_office.c#L19-L38)
+[Sygnaly w passenger] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L29-L43)
+###
 
 ---
 
-## 5. Synchronizacja procesów
+## 5. Mechanizmy IPC
 
-### Tworzenie i inicjalizacja semaforów
-- **`src/ipc.c:86`** - `semget(SEM_KEY, SEM_COUNT, IPC_CREAT | 0600)` - tworzenie zestawu semaforów
-- **`src/ipc.c:95-140`** - `semctl(g_semid, SEM_XXX, SETVAL, arg)` - inicjalizacja wartości semaforów
-  - **Linia 95** - `SEM_SHM_MUTEX = 1`
-  - **Linia 100** - `SEM_LOG_MUTEX = 1`
-  - **Linia 105** - `SEM_STATION_ENTRY = 1`
-  - **Linia 110** - `SEM_ENTRANCE_PASSENGER = 1`
-  - **Linia 115** - `SEM_ENTRANCE_BIKE = 1`
-  - **Linia 120** - `SEM_BOARDING_MUTEX = 1`
-  - **Linia 125** - `SEM_BUS_READY = 0`
-  - **Linia 130-135** - `SEM_TICKET_OFFICE(id) = 1` dla każdej kasy
-  - **Linia 140** - `SEM_TICKET_QUEUE_SLOTS = MAX_TICKET_QUEUE_REQUESTS`
-  - **Linia 145** - `SEM_BOARDING_QUEUE_SLOTS = MAX_BOARDING_QUEUE_REQUESTS`
+### Tworzenie i inicjalizacja IPC
+[Funkcja ipc_create_all] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L70-L195)
+
+### Cleanup
+[IPC cleanup] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L259-L311)
 
 ### Operacje P() i V() na semaforach
-- **`src/ipc.c:330-348`** - `sem_lock()` - operacja P() (dekrementacja) - `semop()` z `sem_op = -1` (blokujące, zwraca -1 przy EINTR/EIDRM/EINVAL)
-- **`src/ipc.c:350-366`** - `sem_unlock()` - operacja V() (inkrementacja) - `semop()` z `sem_op = +1` (nie blokujące)
-- **`src/ipc.c:368-381`** - `sem_getval()` - odczyt wartości semafora - `semctl(..., GETVAL)`
-- **`src/ipc.c:383-396`** - `sem_setval()` - ustawienie wartości semafora - `semctl(..., SETVAL, arg)`
+[Funkcje sem_lock,sem_unlock,sem_getval,sem_setval] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L330-L396)
 
-### Semafor mutex dla pamięci współdzielonej
-- **`src/ipc.c:95`** - inicjalizacja `SEM_SHM_MUTEX = 1`
-- **`src/ipc.c:sem_lock(SEM_SHM_MUTEX)`** - używany wszędzie przed dostępem do `shm_data_t`
-- Przykłady użycia:
-  - **`src/dispatcher.c:100-144`** - `init_shared_state()` - inicjalizacja z mutexem
-  - **`src/passenger.c:436`** - inkrementacja `total_passengers_created` z mutexem
-  - **`src/driver.c:216`** - inkrementacja `passengers_transported` z mutexem
-
-### Semafor limitujący kolejkę żądań
-- **`src/ipc.c:140`** - `SEM_TICKET_QUEUE_SLOTS = MAX_TICKET_QUEUE_REQUESTS` - limit requestów biletowych
-- **`src/ipc.c:145`** - `SEM_BOARDING_QUEUE_SLOTS = MAX_BOARDING_QUEUE_REQUESTS` - limit requestów boardingowych
-- **`src/passenger.c:182`** - `sem_lock(SEM_TICKET_QUEUE_SLOTS)` - przed wysłaniem requestu biletu
-- **`src/passenger.c:225`** - `sem_unlock(SEM_TICKET_QUEUE_SLOTS)` - po otrzymaniu odpowiedzi
-- **`src/passenger.c:299`** - `sem_lock(SEM_BOARDING_QUEUE_SLOTS)` - przed wysłaniem requestu boardingowego
-- **`src/passenger.c:325`** - `sem_unlock(SEM_BOARDING_QUEUE_SLOTS)` - po otrzymaniu odpowiedzi
-
+### Dołączenie zasobów do IPC
+[Funkcja ipc_attach_all] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L197-L248)
+### Odłączenie pamięci współdzielonej
+[Funkcja ipc_detach_all] (https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ipc.c#L250-L257)
 ---
 
-## 6. Pamięć dzielona
-
-### Tworzenie segmentu pamięci współdzielonej
-- **`src/ipc.c:71`** - `shmget(SHM_KEY, sizeof(shm_data_t), IPC_CREAT | 0600)` - tworzenie segmentu
-
-### Przyłączanie pamięci współdzielonej
-- **`src/ipc.c:77`** - `shmat(g_shmid, NULL, 0)` - przyłączenie w dispatcherze (twórcy)
-- **`src/ipc.c:204`** - `shmat(g_shmid, NULL, 0)` - przyłączenie w innych procesach (`ipc_attach_all()`)
-
-### Odłączanie pamięci współdzielonej
-- **`src/ipc.c:37`** - `shmdt(g_shm)` - odłączenie w `ipc_cleanup_partial()`
-- **`src/ipc.c:ipc_detach_all()`** - funkcja odłączająca pamięć we wszystkich procesach
-
-### Usuwanie segmentu pamięci
-- **`src/ipc.c:41`** - `shmctl(g_shmid, IPC_RMID, NULL)` - usuwanie segmentu
-- **`src/ipc.c:ipc_cleanup_all()`** - funkcja czyszcząca wszystkie zasoby IPC
-
----
-
-## 7. Kolejki komunikatów
-
-### Tworzenie kolejek komunikatów
-- **`src/ipc.c:142`** - `msgget(MSG_TICKET_KEY, IPC_CREAT | 0600)` - kolejka requestów biletowych
-- **`src/ipc.c:147`** - `msgget(MSG_TICKET_RESP_KEY, IPC_CREAT | 0600)` - kolejka odpowiedzi biletowych
-- **`src/ipc.c:152`** - `msgget(MSG_BOARDING_KEY, IPC_CREAT | 0600)` - kolejka requestów boardingowych
-- **`src/ipc.c:157`** - `msgget(MSG_BOARDING_RESP_KEY, IPC_CREAT | 0600)` - kolejka odpowiedzi boardingowych
-- **`src/ipc.c:162`** - `msgget(MSG_DISPATCH_KEY, IPC_CREAT | 0600)` - kolejka dispatchera
-
-### Wysyłanie wiadomości (msgsnd())
-- **`src/ipc.c:416-424`** - `msg_send_ticket()` - `msgsnd(g_msgid_ticket, msg, sizeof(...) - sizeof(long), 0)` - wysyłanie requestu biletu
-- **`src/ipc.c:427-435`** - `msg_send_ticket_resp()` - `msgsnd(g_msgid_ticket_resp, ...)` - wysyłanie odpowiedzi biletu (dedykowana kolejka)
-- **`src/ipc.c:454-462`** - `msg_send_boarding()` - `msgsnd(g_msgid_boarding, ...)` - wysyłanie requestu boardingowego
-- **`src/ipc.c:465-473`** - `msg_send_boarding_resp()` - `msgsnd(g_msgid_boarding_resp, ...)` - wysyłanie odpowiedzi boardingowej (dedykowana kolejka)
-- **`src/passenger.c:191`** - wywołanie `msg_send_ticket(&request)` - pasażer wysyła request biletu
-- **`src/ticket_office.c:143`** - wywołanie `msg_send_ticket_resp(&response)` - kasa wysyła odpowiedź (mtype = PID pasażera)
-- **`src/passenger.c:305`** - wywołanie `msg_send_boarding(&request)` - pasażer wysyła request boardingowy (mtype = MSG_BOARD_REQUEST lub MSG_BOARD_REQUEST_VIP dla VIP)
-- **`src/driver.c:155`** - wywołanie `msg_send_boarding_resp(&response)` - kierowca wysyła odpowiedź (mtype = PID pasażera)
-
-### Odbieranie wiadomości (msgrcv())
-- **`src/ipc.c:437`** - `msg_recv_ticket()` - `msgrcv(g_msgid_ticket, msg, sizeof(...) - sizeof(long), mtype, flags)` - odbieranie requestu biletu
-- **`src/ipc.c:446`** - `msg_recv_ticket_resp()` - `msgrcv(g_msgid_ticket_resp, ...)` - odbieranie odpowiedzi biletu
-- **`src/ipc.c:475`** - `msg_recv_boarding()` - `msgrcv(g_msgid_boarding, ...)` - odbieranie requestu boardingowego
-- **`src/ipc.c:484`** - `msg_recv_boarding_resp()` - `msgrcv(g_msgid_boarding_resp, ...)` - odbieranie odpowiedzi boardingowej
-- **`src/ticket_office.c:273`** - wywołanie `msg_recv_ticket(&request, MSG_TICKET_REQUEST, 0)` - kasa odbiera request (blokujące)
-- **`src/passenger.c:204`** - wywołanie `msg_recv_ticket_resp(&response, g_info.pid, 0)` - pasażer odbiera odpowiedź (blokujące, mtype = PID pasażera)
-- **`src/driver.c:441`** - wywołanie `msg_recv_boarding(&request, -MSG_BOARD_REQUEST, 0)` - kierowca odbiera request (blokujące, **negatywny mtype** dla priorytetu VIP - najniższy typ pierwszy)
-- **`src/passenger.c:313`** - wywołanie `msg_recv_boarding_resp(&response, g_info.pid, 0)` - pasażer odbiera odpowiedź (blokujące, mtype = PID pasażera)
+### 
 
 ### Oddzielne kolejki dla żądań i odpowiedzi
 - **Kolejki requestów:**
@@ -344,14 +224,6 @@ Dyspozytor (dispatcher.c)
   - `MSG_TICKET_RESP_KEY` - odpowiedzi biletowe (kasa → pasażer)
   - `MSG_BOARDING_RESP_KEY` - odpowiedzi boardingowe (kierowca → pasażer)
 - **Definicje kluczy:** `include/config.h:MSG_TICKET_KEY`, `MSG_TICKET_RESP_KEY`, `MSG_BOARDING_KEY`, `MSG_BOARDING_RESP_KEY`
-
-### Usuwanie kolejek
-- **`src/ipc.c:49`** - `msgctl(g_msgid_ticket, IPC_RMID, NULL)` - usuwanie kolejki requestów biletowych
-- **`src/ipc.c:53`** - `msgctl(g_msgid_ticket_resp, IPC_RMID, NULL)` - usuwanie kolejki odpowiedzi biletowych
-- **`src/ipc.c:57`** - `msgctl(g_msgid_boarding, IPC_RMID, NULL)` - usuwanie kolejki requestów boardingowych
-- **`src/ipc.c:61`** - `msgctl(g_msgid_boarding_resp, IPC_RMID, NULL)` - usuwanie kolejki odpowiedzi boardingowych
-- **`src/ipc.c:65`** - `msgctl(g_msgid_dispatch, IPC_RMID, NULL)` - usuwanie kolejki dispatchera
-- **`src/ipc.c:ipc_cleanup_all()`** - funkcja usuwająca wszystkie kolejki
 
 ---
 
