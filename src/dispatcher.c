@@ -223,6 +223,63 @@ static void check_bus_departures(shm_data_t *shm) {
     sem_unlock(SEM_SHM_MUTEX);
 }
 
+/* Overseer: detect dead drivers and reassign active_bus_id */
+static void check_driver_health(shm_data_t *shm) {
+    sem_lock(SEM_SHM_MUTEX);
+    
+    int active_bus = shm->active_bus_id;
+    int active_driver_dead = 0;
+    
+    /* Check all drivers */
+    for (int i = 0; i < MAX_BUSES; i++) {
+        pid_t pid = shm->driver_pids[i];
+        if (pid > 0) {
+            /* kill(pid, 0) checks if process exists without sending signal */
+            if (kill(pid, 0) == -1 && errno == ESRCH) {
+                /* Driver is dead */
+                log_dispatcher(LOG_WARN, "Watchdog: Driver %d (PID %d) is dead, clearing", i, pid);
+                shm->driver_pids[i] = 0;
+                shm->buses[i].boarding_open = false;
+                
+                if (i == active_bus) {
+                    active_driver_dead = 1;
+                }
+            }
+        }
+    }
+    
+    /* If active driver died, find a new active bus */
+    if (active_driver_dead || (active_bus >= 0 && shm->driver_pids[active_bus] == 0)) {
+        int new_active = -1;
+        
+        /* Find first live driver at station */
+        for (int i = 0; i < MAX_BUSES; i++) {
+            if (shm->driver_pids[i] > 0 && shm->buses[i].at_station) {
+                new_active = i;
+                break;
+            }
+        }
+        
+        if (new_active >= 0) {
+            shm->active_bus_id = new_active;
+            /* Reset departure time for new active bus */
+            int boarding_interval = log_is_perf_mode() ? 1 : BOARDING_INTERVAL;
+            shm->buses[new_active].departure_time = time(NULL) + boarding_interval;
+            shm->buses[new_active].boarding_open = true;
+            sem_unlock(SEM_SHM_MUTEX);
+            log_dispatcher(LOG_WARN, "Watchdog: Reassigned active bus to %d (driver PID %d)", 
+                          new_active, shm->driver_pids[new_active]);
+        } else {
+            /* No live driver at station - set to -1, passengers will wait */
+            shm->active_bus_id = -1;
+            sem_unlock(SEM_SHM_MUTEX);
+            log_dispatcher(LOG_WARN, "Watchdog: No live drivers at station, active_bus_id = -1");
+        }
+    } else {
+        sem_unlock(SEM_SHM_MUTEX);
+    }
+}
+
 static void print_status(shm_data_t *shm) {
     sem_lock(SEM_SHM_MUTEX);
     
@@ -377,10 +434,13 @@ int main(void) {
     while (g_running) {
         process_signals(shm);
         
+        /* Watchdog: detect dead drivers and reassign active bus */
+        check_driver_health(shm);
+        
         /* Overseer: force departure if buses are overdue */
         check_bus_departures(shm);
         
-        /* periodically check queue health */
+        /* Periodically check queue health */
         if (++health_counter >= 10) {
             ipc_check_queue_health();
             health_counter = 0;
