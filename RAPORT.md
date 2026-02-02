@@ -144,7 +144,7 @@ Dyspozytor (dispatcher.c)
 ## 1. Tworzenie i obsługa plików
 
 ### Tworzenie katalogu logów
-[Tworzenie katalogu przed startem](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L560-L564)
+[Tworzenie katalogu przed startem](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L560-L564)\
 [Tworzenie w `log_init()`](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/logging.c#L115-L121)
 
 ### Otwieranie plików logów
@@ -162,19 +162,19 @@ Dyspozytor (dispatcher.c)
 ## 2. Tworzenie i obsługa procesów
 
 ### fork() i exec() dla dyspozytora
-[Funkcja spawn_dispatcher()](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L89-L106)
+[Funkcja spawn_dispatcher()](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L89-L106)\
 [Wywołanie spawn_dispatcher()](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L577)
 
 ### fork() i exec() dla kasy
-[Funkcja spawn_ticket_office](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L108-L123)
+[Funkcja spawn_ticket_office](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L108-L123)\
 [Pętla tworząca wszystkie kasy](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L592-L598)
 
 ### fork() i exec() dla kierowcy
-[Funkcja spawn_driver](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L129-L148)
+[Funkcja spawn_driver](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L129-L148)\
 [Pętla tworząca wszystkich kierowców](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L604-L610)
 
 ### fork() i exec() dla pasażera
-[Funkcja spawn passenger](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L150-L166)
+[Funkcja spawn passenger](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L150-L166)\
 [Pętla tworząca pasazerow](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L659-L684)
 
 ### Handling procesów potomnych
@@ -183,15 +183,15 @@ Dyspozytor (dispatcher.c)
 ---
 
 ## 3. Tworzenie i obsługa wątków
-[Funkcje dla child thread](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L47-L105)
+[Funkcje dla child thread](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L47-L105)\
 [Przekazanie boardingu Child Thread](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L329-L333)
 ---
 
 ## 4. Obsługa sygnałów
 
-[Sygnaly dla dyspozytora](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/dispatcher.c#L19-L98)
-[Sygnaly w mainie](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L56-L87)
-[Sygnaly w ticket_office](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ticket_office.c#L19-L38)
+[Sygnaly dla dyspozytora](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/dispatcher.c#L19-L98)\
+[Sygnaly w mainie](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/main.c#L56-L87)\
+[Sygnaly w ticket_office](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/ticket_office.c#L19-L38)\
 [Sygnaly w passenger](https://github.com/Pedritos22/City_Bus/blob/d373905f175ec19c021f5dacd25584ddcdaf76db/src/passenger.c#L29-L43)
 ###
 
