@@ -16,15 +16,41 @@
 
 static volatile sig_atomic_t g_running = 1;
 
-#define MAX_TRACKED_PASSENGERS  (10 * 1024 * 1024)  /* 10M */
+#define INITIAL_PASSENGER_CAPACITY 1024
 
 /* Process tracking */
 static pid_t g_dispatcher_pid = 0;
 static pid_t g_ticket_office_pids[TICKET_OFFICES];
 static pid_t g_driver_pids[MAX_BUSES];
-static pid_t g_passenger_pids[MAX_TRACKED_PASSENGERS];
+static pid_t *g_passenger_pids = NULL;
 static int g_passenger_count = 0;
+static int g_passenger_capacity = 0;
 static int g_passengers_spawned = 0;
+
+static int track_passenger_pid(pid_t pid) {
+    if (g_passenger_pids == NULL) {
+        g_passenger_capacity = INITIAL_PASSENGER_CAPACITY;
+        g_passenger_pids = malloc(g_passenger_capacity * sizeof(pid_t));
+        if (g_passenger_pids == NULL) {
+            perror("malloc g_passenger_pids");
+            return -1;
+        }
+    }
+    
+    if (g_passenger_count >= g_passenger_capacity) {
+        int new_capacity = g_passenger_capacity * 2;
+        pid_t *new_array = realloc(g_passenger_pids, new_capacity * sizeof(pid_t));
+        if (new_array == NULL) {
+            perror("realloc g_passenger_pids");
+            return -1;  /* Keep using old array, don't track this PID */
+        }
+        g_passenger_pids = new_array;
+        g_passenger_capacity = new_capacity;
+    }
+    
+    g_passenger_pids[g_passenger_count++] = pid;
+    return 0;
+}
 
 static void handle_shutdown(int sig) {
     (void)sig;
@@ -68,7 +94,7 @@ static pid_t spawn_dispatcher(void) {
     }
     
     if (pid == 0) {
-        /* Child process - exec dispatcher */
+        /* Child process, exec dispatcher */
         execl("./dispatcher", "dispatcher", NULL);
         perror("execl dispatcher");
         _exit(EXIT_FAILURE);
@@ -87,7 +113,7 @@ static pid_t spawn_ticket_office(int office_id) {
     }
     
     if (pid == 0) {
-        /* Child process - exec ticket office */
+        /* Child process, exec ticket office */
         char id_str[16];
         snprintf(id_str, sizeof(id_str), "%d", office_id);
         execl("./ticket_office", "ticket_office", id_str, NULL);
@@ -108,7 +134,7 @@ static pid_t spawn_driver(int bus_id) {
     }
     
     if (pid == 0) {
-        /* Child process - exec driver */
+        /* Child process, exec driver */
         char id_str[16];
         snprintf(id_str, sizeof(id_str), "%d", bus_id);
         execl("./driver", "driver", id_str, NULL);
@@ -129,7 +155,7 @@ static pid_t spawn_passenger(void) {
     }
     
     if (pid == 0) {
-        /* Child process - exec passenger */
+        /* Child process, exec passenger */
         execl("./passenger", "passenger", NULL);
         perror("execl passenger");
         _exit(EXIT_FAILURE);
@@ -138,9 +164,6 @@ static pid_t spawn_passenger(void) {
     return pid;
 }
 
-/*============================================================================
- * SIMULATION CONTROL
- *============================================================================*/
 
 static int wait_for_ipc(int timeout_seconds) {
     int elapsed = 0;
@@ -337,7 +360,7 @@ static void wait_all_children(void) {
         }
     }
     
-    /* Timeout reached - check if any children still exist */
+    /* Timeout reached, check if any children still exist */
     pid = waitpid(-1, &status, WNOHANG);
     if (pid == -1 && errno == ECHILD) {
         printf("[MAIN] All children terminated (reaped %d total)\n", reaped_count);
@@ -441,7 +464,7 @@ int main(int argc, char *argv[]) {
     unlink(LOG_PASSENGER);
     unlink(LOG_STATS);
     
-    /* === STEP 1: Start dispatcher === */
+
     printf("[MAIN] Starting dispatcher...\n");
     g_dispatcher_pid = spawn_dispatcher();
     if (g_dispatcher_pid <= 0) {
@@ -449,7 +472,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     
-    /* === STEP 2: Wait for IPC resources === */
+
     printf("[MAIN] Waiting for IPC resources...\n");
     if (wait_for_ipc(10) != 0) {
         fprintf(stderr, "[MAIN] IPC resources not available\n");
@@ -457,7 +480,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     
-    /* === STEP 3: Start ticket offices === */
+
     printf("[MAIN] Starting ticket offices...\n");
     for (int i = 0; i < TICKET_OFFICES; i++) {
         g_ticket_office_pids[i] = spawn_ticket_office(i);
@@ -469,7 +492,7 @@ int main(int argc, char *argv[]) {
     /* Give ticket offices time to start */
     usleep(100000);
     
-    /* === STEP 4: Start drivers === */
+
     printf("[MAIN] Starting drivers...\n");
     for (int i = 0; i < MAX_BUSES; i++) {
         g_driver_pids[i] = spawn_driver(i);
@@ -499,7 +522,7 @@ int main(int argc, char *argv[]) {
     /* Also log dispatcher PID for easy grepping */
     log_master(LOG_INFO, "DISPATCHER_PID=%d", g_dispatcher_pid);
     
-    /* === STEP 5: Spawn passengers continuously until fork() fails or station closes === */
+    
     while (g_running) {
         shm_data_t *shm = ipc_get_shm();
         if (shm) {
@@ -525,9 +548,7 @@ int main(int argc, char *argv[]) {
         }
 
         g_passengers_spawned++;
-        if (g_passenger_count < MAX_TRACKED_PASSENGERS) {
-            g_passenger_pids[g_passenger_count++] = pid;
-        }
+        track_passenger_pid(pid);
         if ((g_passengers_spawned % 1000) == 0 && !is_minimal) {
             printf("[MAIN] Spawned %d passenger processes so far\n", g_passengers_spawned);
         }
@@ -543,9 +564,9 @@ int main(int argc, char *argv[]) {
     
     printf("\n[MAIN] Passenger creation stopped. Monitoring simulation...\n\n");
     
-    /* === STEP 6: Monitor simulation progress === */
+
     while (g_running) {
-        /* Reap terminated children */
+
         reap_children();
         
         /* Check progress */
@@ -559,7 +580,7 @@ int main(int argc, char *argv[]) {
     
     printf("\n[MAIN] Simulation complete. Shutting down...\n\n");
     
-    /* === STEP 7: Cleanup === */
+
     
     /* Signal dispatcher to shutdown (it will cleanup IPC) */
     if (g_dispatcher_pid > 0) {
@@ -588,6 +609,9 @@ int main(int argc, char *argv[]) {
     printf("  - passenger.log\n");
     printf("  - stats.log\n");
     printf("========================================\n");
+    
+    free(g_passenger_pids);
+    g_passenger_pids = NULL;
     
     return 0;
 }

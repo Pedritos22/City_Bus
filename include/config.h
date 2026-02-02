@@ -38,7 +38,9 @@
 #define SHM_KEY             (IPC_KEY_BASE + 0x01)
 #define SEM_KEY             (IPC_KEY_BASE + 0x02)
 #define MSG_TICKET_KEY      (IPC_KEY_BASE + 0x03)
-#define MSG_BOARDING_KEY    (IPC_KEY_BASE + 0x04)
-#define MSG_DISPATCH_KEY    (IPC_KEY_BASE + 0x05)
+#define MSG_TICKET_RESP_KEY (IPC_KEY_BASE + 0x04)
+#define MSG_BOARDING_KEY    (IPC_KEY_BASE + 0x05)
+#define MSG_BOARDING_RESP_KEY (IPC_KEY_BASE + 0x06)
+#define MSG_DISPATCH_KEY    (IPC_KEY_BASE + 0x07)
 
 #endif

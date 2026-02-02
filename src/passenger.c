@@ -42,12 +42,7 @@ static void setup_signals(void) {
     if (sigaction(SIGTERM, &sa, NULL) == -1) perror("sigaction SIGTERM");
 }
 
-/*============================================================================
- * CHILD THREAD
- * 
- * The child is implemented as a thread within the adult's process.
- * This guarantees the child cannot board without adult supervision.
- *============================================================================*/
+
 
 static void* child_thread_func(void *arg) {
     int child_age = *(int*)arg;
@@ -109,9 +104,7 @@ static void wait_for_child_thread(void) {
     pthread_join(g_child_thread, NULL);
 }
 
-/*============================================================================
- * PASSENGER INITIALIZATION
- *============================================================================*/
+
 
 static void init_passenger(void) {
     g_info.pid = getpid();
@@ -151,9 +144,7 @@ static void init_passenger(void) {
     g_info.assigned_bus = -1;
 }
 
-/*============================================================================
- * TICKET OFFICE INTERACTION
- *============================================================================*/
+
 
 static int purchase_ticket(shm_data_t *shm) {
     /* Mark as in office */
@@ -172,7 +163,7 @@ static int purchase_ticket(shm_data_t *shm) {
     request.passenger = g_info;
     request.approved = false;
     
-    /* Backpressure: limit outstanding ticket requests to avoid msg queue deadlock */
+    /* Limit outstanding ticket requests to avoid msg queue deadlock */
     if (sem_lock(SEM_TICKET_QUEUE_SLOTS) == -1) {
         /* IPC removed - simulation ending */
         sem_lock(SEM_SHM_MUTEX);
@@ -193,9 +184,9 @@ static int purchase_ticket(shm_data_t *shm) {
         return 0;
     }
     
-    /* Wait for response (mtype = our PID) */
+    /* Wait for response from dedicated response queue (mtype = our PID) */
     ticket_msg_t response;
-    ssize_t ret = msg_recv_ticket(&response, g_info.pid, 0);
+    ssize_t ret = msg_recv_ticket_resp(&response, g_info.pid, 0);
     
     if (ret == -1) {
         if (errno == EINTR || errno == EIDRM || errno == EINVAL) {
@@ -226,9 +217,7 @@ static int purchase_ticket(shm_data_t *shm) {
     }
 }
 
-/*============================================================================
- * STATION ENTRY
- *============================================================================*/
+
 
 static int enter_station(shm_data_t *shm) {
     /* Check if station is open */
@@ -237,7 +226,7 @@ static int enter_station(shm_data_t *shm) {
     sem_unlock(SEM_SHM_MUTEX);
     
     if (!station_open) {
-        /* Station closed means end of simulation; do not block on SEM_STATION_ENTRY */
+        /* Station closed means end of simulation */
         log_passenger(LOG_WARN, "PID %d: Station is closed, cannot enter", g_info.pid);
         return 0;
     }
@@ -278,9 +267,7 @@ static int enter_station(shm_data_t *shm) {
     }
 }
 
-/*============================================================================
- * BOARDING
- *============================================================================*/
+
 
 static int attempt_boarding(shm_data_t *shm) {
     /* Find active bus */
@@ -307,7 +294,7 @@ static int attempt_boarding(shm_data_t *shm) {
     request.bus_id = active_bus;
     request.approved = false;
     
-    /* Backpressure: limit outstanding boarding requests to avoid msg queue deadlock */
+    /* Limit outstanding boarding requests to avoid msg queue deadlock */
     if (sem_lock(SEM_BOARDING_QUEUE_SLOTS) == -1) {
         /* IPC removed - simulation ending */
         return -1;
@@ -320,9 +307,9 @@ static int attempt_boarding(shm_data_t *shm) {
         return -1;
     }
     
-    /* Wait for response (mtype = our PID) */
+    /* Wait for response from dedicated response queue (mtype = our PID) */
     boarding_msg_t response;
-    ssize_t ret = msg_recv_boarding(&response, g_info.pid, 0);
+    ssize_t ret = msg_recv_boarding_resp(&response, g_info.pid, 0);
     
     if (ret == -1) {
         sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
@@ -333,7 +320,7 @@ static int attempt_boarding(shm_data_t *shm) {
         return -1;
     }
     
-    /* Response received - unlock semaphore (request processed) */
+    /* Response received, unlock semaphore (request processed) */
     sem_unlock(SEM_BOARDING_QUEUE_SLOTS);
     
     if (response.approved) {
@@ -365,18 +352,16 @@ static int attempt_boarding(shm_data_t *shm) {
     }
 }
 
-/*============================================================================
- * MAIN FUNCTION
- *============================================================================*/
+
 
 int main(void) {
     /* Seed random number generator uniquely for this process */
     srand(time(NULL) ^ getpid() ^ (getpid() << 16));
     
-    /* Setup signal handlers */
+
     setup_signals();
     
-    /* Initialize passenger attributes */
+
     init_passenger();
     
     /* Check log mode - only print to stdout if not minimal */
@@ -439,14 +424,14 @@ int main(void) {
                      g_info.has_bike ? "YES" : "NO");
     }
     
-    /* === STEP 0: Start child thread if this adult has a child === */
+
     if (start_child_thread() != 0) {
         log_passenger(LOG_ERROR, "PID %d: Failed to start child thread", g_info.pid);
         g_info.has_child_with = false;
         g_info.seat_count = 1;
     }
     
-    /* Count as created now (before ticket purchase) so tickets_issued <= created always holds */
+
     sem_lock(SEM_SHM_MUTEX);
     shm->total_passengers_created += g_info.seat_count;
     shm->adults_created += 1;
@@ -458,7 +443,7 @@ int main(void) {
     }
     sem_unlock(SEM_SHM_MUTEX);
     
-    /* === STEP 1: Purchase ticket if not VIP === */
+
     if (!g_info.is_vip) {
         if (!purchase_ticket(shm)) {
             sem_lock(SEM_SHM_MUTEX);
@@ -494,7 +479,7 @@ int main(void) {
         return 1;
     }
     
-    /* === STEP 2: Enter station === */
+
     int enter_attempts = 0;
     while (!enter_station(shm) && g_running && enter_attempts < 10) {
         enter_attempts++;
@@ -516,7 +501,7 @@ int main(void) {
         return 1;
     }
     
-    /* === STEP 3: Attempt to board === */
+
     int boarded = 0;
     int board_attempts = 0;
     
@@ -549,7 +534,7 @@ int main(void) {
         }
     }
     
-    /* === STEP 4: Complete journey or exit === */
+
     if (boarded) {
         if (g_info.has_child_with) {
             log_passenger(LOG_INFO, "PID %d (Adult age=%d + Child age=%d): Journey complete on bus %d",
@@ -573,7 +558,7 @@ int main(void) {
         }
     }
     
-    /* Wait for child thread to finish */
+
     wait_for_child_thread();
     
     /* Cleanup */

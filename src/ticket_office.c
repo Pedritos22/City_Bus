@@ -21,11 +21,6 @@ static void handle_shutdown(int sig) {
     g_running = 0;
 }
 
-static void handle_alarm(int sig) {
-    (void)sig;
-    /* Just interrupt - no action needed */
-}
-
 static void setup_signals(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -40,11 +35,6 @@ static void setup_signals(void) {
     if (sigaction(SIGTERM, &sa, NULL) == -1) {
         perror("sigaction SIGTERM");
     }
-    
-    sa.sa_handler = handle_alarm;
-    if (sigaction(SIGALRM, &sa, NULL) == -1) {
-        perror("sigaction SIGALRM");
-    }
 }
 
 
@@ -57,6 +47,25 @@ static int validate_passenger(const passenger_info_t *passenger) {
     
     /* Validate PID */
     if (passenger->pid <= 0) {
+        return 0;
+    }
+    
+    return 1;
+}
+
+/* Safeguard: validate ticket request message */
+static int validate_ticket_request(const ticket_msg_t *request) {
+    /* Check mtype is valid ticket request */
+    if (request->mtype != MSG_TICKET_REQUEST) {
+        log_ticket_office(LOG_ERROR, "Office %d: Invalid message type %ld", 
+                         g_office_id, request->mtype);
+        return 0;
+    }
+    
+    /* Check passenger PID is valid */
+    if (request->passenger.pid <= 0) {
+        log_ticket_office(LOG_ERROR, "Office %d: Invalid passenger PID %d", 
+                         g_office_id, request->passenger.pid);
         return 0;
     }
     
@@ -83,7 +92,6 @@ static void process_ticket_request(shm_data_t *shm, ticket_msg_t *request) {
         log_ticket_office(LOG_WARN, "Office %d: Invalid passenger data from PID %d",
                          g_office_id, request->passenger.pid);
     } else {
-        /* Simulate ticket processing time - skipped in performance mode */
         if (!log_is_perf_mode()) {
             sleep(TICKET_PROCESS_TIME);
         }
@@ -92,7 +100,7 @@ static void process_ticket_request(shm_data_t *shm, ticket_msg_t *request) {
         response.approved = true;
         response.passenger.has_ticket = true;
         
-        /* Update shared memory */
+
         sem_lock(SEM_SHM_MUTEX);
         shm->tickets_issued++;
         shm->tickets_sold_people += request->passenger.seat_count > 0 ? request->passenger.seat_count : 1;
@@ -119,7 +127,7 @@ static void process_ticket_request(shm_data_t *shm, ticket_msg_t *request) {
     }
     
     /* Send response back to passenger */
-    if (msg_send_ticket(&response) == -1) {
+    if (msg_send_ticket_resp(&response) == -1) {
         log_ticket_office(LOG_ERROR, "Office %d: Failed to send ticket response to PID %d",
                          g_office_id, request->passenger.pid);
     }
@@ -142,7 +150,7 @@ int main(int argc, char *argv[]) {
         g_office_id = atoi(argv[1]);
     }
     
-    /* Check log mode - only print to stdout if not minimal */
+    /* Check log mode */
     const char *log_mode = getenv("BUS_LOG_MODE");
     int is_minimal = (log_mode && strcmp(log_mode, "minimal") == 0);
     
@@ -151,7 +159,7 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
     }
     
-    /* Setup signal handlers */
+
     setup_signals();
     
     /* Attach to existing IPC resources */
@@ -167,7 +175,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
     
-    /* Register this ticket office */
+
     sem_lock(SEM_SHM_MUTEX);
     shm->ticket_office_pids[g_office_id] = getpid();
     sem_unlock(SEM_SHM_MUTEX);
@@ -193,14 +201,9 @@ int main(int argc, char *argv[]) {
             break;
         }
         
-        /* Use alarm to periodically interrupt blocking msgrcv for shutdown check */
-        alarm(1);
-        
-        /* Wait for a ticket request (blocking, interrupted by SIGALRM) */
+
         ticket_msg_t request;
         ssize_t ret = msg_recv_ticket(&request, MSG_TICKET_REQUEST, 0);
-        
-        alarm(0);  /* Cancel alarm */
         
         if (ret == -1) {
             if (errno == EINTR) {
@@ -215,8 +218,14 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* Backpressure: a request has been removed from the ticket queue */
+        /* A request has been removed from the ticket queue */
         sem_unlock(SEM_TICKET_QUEUE_SLOTS);
+        
+        /* Validate message before processing */
+        if (!validate_ticket_request(&request)) {
+            log_ticket_office(LOG_WARN, "Office %d: Discarding invalid ticket request", g_office_id);
+            continue;
+        }
         
         /* Got a ticket request */
         log_ticket_office(LOG_INFO, "Office %d: Processing request from passenger PID %d",
@@ -227,46 +236,17 @@ int main(int argc, char *argv[]) {
         shm->ticket_office_busy[g_office_id] = request.passenger.pid;
         sem_unlock(SEM_SHM_MUTEX);
         
-        /* Lock the office semaphore to ensure exclusive processing */
+
         sem_lock(office_sem);
         
-        /* Process the request */
         process_ticket_request(shm, &request);
         
-        /* Release office semaphore */
         sem_unlock(office_sem);
         
         /* Mark office as free */
         sem_lock(SEM_SHM_MUTEX);
         shm->ticket_office_busy[g_office_id] = 0;
         sem_unlock(SEM_SHM_MUTEX);
-    }
-    
-    /* Drain remaining requests and send denial responses so passengers don't hang */
-    log_ticket_office(LOG_INFO, "Office %d: Draining remaining requests", g_office_id);
-    {
-        ticket_msg_t request;
-        while (msg_recv_ticket(&request, MSG_TICKET_REQUEST, IPC_NOWAIT) > 0) {
-            sem_unlock(SEM_TICKET_QUEUE_SLOTS);  /* Backpressure */
-            
-            /* Send denial response */
-            ticket_msg_t response;
-            memset(&response, 0, sizeof(response));
-            response.mtype = request.passenger.pid;
-            response.passenger = request.passenger;
-            response.ticket_office_id = g_office_id;
-            response.approved = false;
-            msg_send_ticket(&response);
-            
-            /* Update stats */
-            sem_lock(SEM_SHM_MUTEX);
-            shm->tickets_denied++;
-            shm->passengers_in_office--;
-            sem_unlock(SEM_SHM_MUTEX);
-            
-            log_ticket_office(LOG_INFO, "Office %d: Denied ticket to PID %d (station closed)",
-                             g_office_id, request.passenger.pid);
-        }
     }
     
     /* Cleanup */

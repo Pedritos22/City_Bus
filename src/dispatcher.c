@@ -171,16 +171,17 @@ static void process_signals(shm_data_t *shm) {
         sem_lock(SEM_SHM_MUTEX);
         if (!shm->station_closed) {
             shm->station_closed = true;
-            shm->station_open = false;      /* no new entries */
-            shm->boarding_allowed = false;  /* no more boarding - passengers waiting should leave */
+            shm->station_open = false;
             shm->spawning_stopped = true;   /* main should stop spawning */
             sem_unlock(SEM_SHM_MUTEX);
 
-            log_dispatcher(LOG_WARN, "Station CLOSED - no new entries, no boarding, simulation ending");
-            printf("[DISPATCHER] SIGUSR2 processed - station closed, boarding stopped, spawning stopped\n");
+            log_dispatcher(LOG_WARN, "Station CLOSED - no new entries, waiting passengers can still board");
+            printf("[DISPATCHER] SIGUSR2 processed - station closed, waiting passengers will be transported\n");
             fflush(stdout);
 
-            sem_setval(SEM_STATION_ENTRY, 0);
+            /* Wake up processes blocked on station entry, they will see station_open=false and exit.*/
+            sem_setval(SEM_STATION_ENTRY, 1000);
+            sem_setval(SEM_TICKET_QUEUE_SLOTS, 1000);
         } else {
             sem_unlock(SEM_SHM_MUTEX);
         }
@@ -194,6 +195,32 @@ static int all_buses_at_station_and_empty(shm_data_t *shm) {
         if (shm->buses[i].entering_count != 0) return 0;
     }
     return 1;
+}
+
+/* Check if buses should depart and force departure via SIGUSR1 */
+static void check_bus_departures(shm_data_t *shm) {
+    time_t now = time(NULL);
+    
+    sem_lock(SEM_SHM_MUTEX);
+    for (int i = 0; i < MAX_BUSES; i++) {
+        bus_state_t *bus = &shm->buses[i];
+        
+        /* Only check active buses at station with passengers */
+        if (!bus->at_station || bus->passenger_count == 0) continue;
+        if (bus->departure_time == 0) continue;
+        
+        /* If departure time exceeded by more than 2 seconds, force departure */
+        if (now > bus->departure_time + 2) {
+            pid_t driver_pid = shm->driver_pids[i];
+            if (driver_pid > 0) {
+                sem_unlock(SEM_SHM_MUTEX);
+                log_dispatcher(LOG_WARN, "Overseer: Bus %d overdue (>2s), forcing departure via SIGUSR1", i);
+                kill(driver_pid, SIGUSR1);
+                sem_lock(SEM_SHM_MUTEX);
+            }
+        }
+    }
+    sem_unlock(SEM_SHM_MUTEX);
 }
 
 static void print_status(shm_data_t *shm) {
@@ -346,9 +373,19 @@ int main(void) {
     }
     
     int status_counter = 0;
+    int health_counter = 0;
     while (g_running) {
-        // Process pending signals
         process_signals(shm);
+        
+        /* Overseer: force departure if buses are overdue */
+        check_bus_departures(shm);
+        
+        /* periodically check queue health */
+        if (++health_counter >= 10) {
+            ipc_check_queue_health();
+            health_counter = 0;
+        }
+        
         if (!is_minimal) {
             print_status(shm);
         } else {

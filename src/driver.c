@@ -10,11 +10,8 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/msg.h>
-#include <sys/time.h>
-
 static volatile sig_atomic_t g_running = 1;
 static volatile sig_atomic_t g_early_departure = 0;
-static volatile sig_atomic_t g_check_departure = 0;
 static int g_bus_id = 0;
 
 static void handle_shutdown(int sig) {
@@ -25,11 +22,6 @@ static void handle_shutdown(int sig) {
 static void handle_early_departure(int sig) {
     (void)sig;
     g_early_departure = 1;
-}
-
-static void handle_alarm(int sig) {
-    (void)sig;
-    g_check_departure = 1;
 }
 
 static void setup_signals(void) {
@@ -44,9 +36,6 @@ static void setup_signals(void) {
     
     sa.sa_handler = handle_early_departure;
     if (sigaction(SIGUSR1, &sa, NULL) == -1) perror("sigaction SIGUSR1");
-    
-    sa.sa_handler = handle_alarm;
-    if (sigaction(SIGALRM, &sa, NULL) == -1) perror("sigaction SIGALRM");
 }
 
 static int can_board(shm_data_t *shm, const boarding_msg_t *request, char *reason) {
@@ -93,10 +82,39 @@ static int can_board(shm_data_t *shm, const boarding_msg_t *request, char *reaso
         return 0;
     }
     
-    /* Note: Child supervision is guaranteed because children are threads
-     * within the adult's process - they can't board separately */
     
     reason[0] = '\0';
+    return 1;
+}
+
+/* Safeguard: validate boarding request message */
+static int validate_boarding_request(const boarding_msg_t *request) {
+    /* Check mtype is valid boarding request */
+    if (request->mtype != MSG_BOARD_REQUEST && request->mtype != MSG_BOARD_REQUEST_VIP) {
+        log_driver(LOG_ERROR, "Bus %d: Invalid message type %ld", g_bus_id, request->mtype);
+        return 0;
+    }
+    
+    /* Check passenger PID is valid */
+    if (request->passenger.pid <= 0) {
+        log_driver(LOG_ERROR, "Bus %d: Invalid passenger PID %d", g_bus_id, request->passenger.pid);
+        return 0;
+    }
+    
+    /* Check seat count is reasonable */
+    if (request->passenger.seat_count <= 0 || request->passenger.seat_count > 2) {
+        log_driver(LOG_ERROR, "Bus %d: Invalid seat count %d from PID %d", 
+                  g_bus_id, request->passenger.seat_count, request->passenger.pid);
+        return 0;
+    }
+    
+    /* Check age is valid */
+    if (request->passenger.age < MIN_AGE || request->passenger.age > MAX_AGE) {
+        log_driver(LOG_ERROR, "Bus %d: Invalid age %d from PID %d",
+                  g_bus_id, request->passenger.age, request->passenger.pid);
+        return 0;
+    }
+    
     return 1;
 }
 
@@ -137,20 +155,23 @@ static void process_boarding_request(shm_data_t *shm, boarding_msg_t *request) {
         if (request->passenger.is_vip) {
             shm->boarded_vip_people += seats;
         }
+        int current_count = shm->buses[g_bus_id].passenger_count;
+        int current_bikes = shm->buses[g_bus_id].bike_count;
         sem_unlock(SEM_SHM_MUTEX);
         
         /* Release entrance */
         sem_unlock(entrance_sem);
-        if (request->passenger.has_child_with) {
+        if (request->passenger.is_vip) {
+            log_driver(LOG_INFO, "Bus %d: VIP PID %d priority boarded (Total: %d/%d)",
+                      g_bus_id, request->passenger.pid, current_count, BUS_CAPACITY);
+        } else if (request->passenger.has_child_with) {
             log_driver(LOG_INFO, "Bus %d: Adult PID %d + child boarded (%d seats) (Total: %d/%d, Bikes: %d/%d)",
                       g_bus_id, request->passenger.pid, seats,
-                      shm->buses[g_bus_id].passenger_count, BUS_CAPACITY,
-                      shm->buses[g_bus_id].bike_count, BIKE_CAPACITY);
+                      current_count, BUS_CAPACITY, current_bikes, BIKE_CAPACITY);
         } else {
             log_driver(LOG_INFO, "Bus %d: Passenger PID %d boarded (Total: %d/%d, Bikes: %d/%d)",
                       g_bus_id, request->passenger.pid,
-                      shm->buses[g_bus_id].passenger_count, BUS_CAPACITY,
-                      shm->buses[g_bus_id].bike_count, BIKE_CAPACITY);
+                      current_count, BUS_CAPACITY, current_bikes, BIKE_CAPACITY);
         }
     } else {
         response.approved = false;
@@ -159,7 +180,7 @@ static void process_boarding_request(shm_data_t *shm, boarding_msg_t *request) {
         log_driver(LOG_WARN, "Bus %d: Boarding denied for PID %d - %s",
                   g_bus_id, request->passenger.pid, response.reason);
     }
-    if (msg_send_boarding(&response) == -1) {
+    if (msg_send_boarding_resp(&response) == -1) {
         log_driver(LOG_ERROR, "Bus %d: Failed to send boarding response to PID %d",
                   g_bus_id, request->passenger.pid);
     }
@@ -227,10 +248,16 @@ static void depart_bus(shm_data_t *shm) {
 static int check_shutdown(shm_data_t *shm) {
     sem_lock(SEM_SHM_MUTEX);
     int running = shm->simulation_running;
+    int waiting = shm->passengers_waiting;
     int station_closed = shm->station_closed;
     sem_unlock(SEM_SHM_MUTEX);
     
-    return !running || station_closed;
+    /* Don't shutdown if passengers are still waiting (even if station closed) */
+    if (station_closed && waiting > 0) {
+        return 0;  // Keep working until all passengers transported
+    }
+    
+    return !running;
 }
 
 static int g_depart_when_full = 0;  /* Set by --full flag */
@@ -257,11 +284,11 @@ static int should_depart(shm_data_t *shm) {
     }
     
     /* Debug: log why not departing (only occasionally to avoid spam) */
-    // static int debug_counter = 0;
-    // if (++debug_counter % 500 == 0 && passengers > 0 && depart_time > 0) {
-    //     log_driver(LOG_INFO, "Bus %d: waiting - now=%ld, depart_time=%ld, diff=%ld, passengers=%d",
-    //                g_bus_id, (long)now, (long)depart_time, (long)(depart_time - now), passengers);
-    // }
+    static int debug_counter = 0;
+    if (++debug_counter % 500 == 0 && passengers > 0 && depart_time > 0) {
+        log_driver(LOG_INFO, "Bus %d: waiting - now=%ld, depart_time=%ld, diff=%ld, passengers=%d",
+                   g_bus_id, (long)now, (long)depart_time, (long)(depart_time - now), passengers);
+    }
     
     /* Early departure signal (SIGUSR1) with passengers */
     if (g_early_departure && passengers > 0) {
@@ -323,6 +350,8 @@ int main(int argc, char *argv[]) {
     sem_unlock(SEM_SHM_MUTEX);
     log_driver(LOG_INFO, "Bus %d driver started (PID=%d)", g_bus_id, getpid());
     
+    int was_active = (g_bus_id == 0);  /* Only bus 0 starts active */
+    
     while (g_running) {
         if (check_shutdown(shm)) {
             log_driver(LOG_INFO, "Bus %d: Shutdown detected", g_bus_id);
@@ -332,6 +361,15 @@ int main(int argc, char *argv[]) {
         int at_station = shm->buses[g_bus_id].at_station;
         int boarding_open = shm->buses[g_bus_id].boarding_open;
         int am_active = (shm->active_bus_id == g_bus_id);
+        
+        /* Just became active, reset departure time */
+        if (am_active && !was_active && at_station) {
+            int boarding_interval = log_is_perf_mode() ? 1 : BOARDING_INTERVAL;
+            shm->buses[g_bus_id].departure_time = time(NULL) + boarding_interval;
+            log_driver(LOG_INFO, "Bus %d: Became active, departure in %d sec", 
+                      g_bus_id, boarding_interval);
+        }
+        was_active = am_active;
         sem_unlock(SEM_SHM_MUTEX);
         
         /* Only the active bus receives passengers; others wait */
@@ -366,38 +404,15 @@ int main(int argc, char *argv[]) {
             depart_bus(shm);
             continue;
         }
-        g_check_departure = 0;
-        if (log_is_perf_mode()) {
-            /* Use setitimer for sub-second precision in performance mode */
-            struct itimerval timer;
-            timer.it_value.tv_sec = 0;
-            timer.it_value.tv_usec = 100000;
-            timer.it_interval.tv_sec = 0;
-            timer.it_interval.tv_usec = 0;
-            setitimer(ITIMER_REAL, &timer, NULL);
-        } else {
-            alarm(1);
-        }
+        /* Receive boarding request - negative mtype receives lowest type first (VIP=1 before regular=2) */
         boarding_msg_t request;
-        ssize_t ret = msg_recv_boarding(&request, MSG_BOARD_REQUEST_VIP, IPC_NOWAIT);
-        
-        if (ret <= 0) {
-            ret = msg_recv_boarding(&request, MSG_BOARD_REQUEST, 0);
-        } else {
-            log_driver(LOG_INFO, "Bus %d: VIP passenger PID %d gets priority boarding",
-                      g_bus_id, request.passenger.pid);
-        }
-        if (log_is_perf_mode()) {
-            struct itimerval timer;
-            timer.it_value.tv_sec = 0;
-            timer.it_value.tv_usec = 0;
-            timer.it_interval.tv_sec = 0;
-            timer.it_interval.tv_usec = 0;
-            setitimer(ITIMER_REAL, &timer, NULL);
-        } else {
-            alarm(0);
-        }
+        ssize_t ret = msg_recv_boarding(&request, -MSG_BOARD_REQUEST, 0);
         if (ret > 0) {
+            /* Safeguard: validate message before processing */
+            if (!validate_boarding_request(&request)) {
+                log_driver(LOG_WARN, "Bus %d: Discarding invalid boarding request", g_bus_id);
+                continue;
+            }
             process_boarding_request(shm, &request);
             /* Passenger unlocks SEM_BOARDING_QUEUE_SLOTS after receiving response */
             if (log_is_perf_mode() && should_depart(shm)) {
