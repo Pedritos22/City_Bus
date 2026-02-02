@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/msg.h>
+#include <sys/ipc.h>
 
 
 static volatile sig_atomic_t g_running = 1;
@@ -142,6 +143,37 @@ static int check_shutdown(shm_data_t *shm) {
     return !running || station_closed;
 }
 
+/* When station is closed (SIGUSR2): drain queue - send "denied" to each waiting passenger
+ * so they unblock and leave; do not issue new tickets. */
+static void drain_queue_on_close(shm_data_t *shm) {
+    ticket_msg_t request;
+    ssize_t ret;
+    while ((ret = msg_recv_ticket(&request, MSG_TICKET_REQUEST, IPC_NOWAIT)) > 0) {
+        /* Slot was held by passenger; we consumed the message */
+        sem_unlock(SEM_TICKET_QUEUE_SLOTS);
+        
+        ticket_msg_t response;
+        memset(&response, 0, sizeof(response));
+        response.mtype = request.passenger.pid;
+        response.passenger = request.passenger;
+        response.ticket_office_id = g_office_id;
+        response.approved = false;  /* Station closed - no ticket, passenger must leave */
+        
+        sem_lock(SEM_SHM_MUTEX);
+        shm->passengers_in_office--;
+        shm->tickets_denied++;
+        sem_unlock(SEM_SHM_MUTEX);
+        
+        if (msg_send_ticket_resp(&response) == -1) {
+            log_ticket_office(LOG_WARN, "Office %d: Failed to send close response to PID %d",
+                             g_office_id, request.passenger.pid);
+        } else {
+            log_ticket_office(LOG_INFO, "Office %d: Station closed - sent denial to PID %d (must leave)",
+                             g_office_id, request.passenger.pid);
+        }
+    }
+}
+
 
 
 int main(int argc, char *argv[]) {
@@ -195,9 +227,10 @@ int main(int argc, char *argv[]) {
     
     /* Main ticket processing loop */
     while (g_running) {
-        /* Check for shutdown */
+        /* Check for shutdown (SIGUSR2 = station closed, or simulation ending) */
         if (check_shutdown(shm)) {
-            log_ticket_office(LOG_INFO, "Office %d: Shutdown signal received", g_office_id);
+            log_ticket_office(LOG_INFO, "Office %d: Station closed / shutdown - draining queue so waiting passengers leave", g_office_id);
+            drain_queue_on_close(shm);
             break;
         }
         

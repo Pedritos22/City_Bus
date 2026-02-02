@@ -26,7 +26,8 @@ static pid_t *g_passenger_pids = NULL;
 static int g_passenger_count = 0;
 static int g_passenger_capacity = 0;
 static int g_passengers_spawned = 0;
-static int g_test_mode = 0;  /* 0 = normal, 1-5 = test modes */
+static int g_test_mode = 0;  /* 0 = normal, 1-8 = test modes */
+static int g_max_passengers = 0;  /* 0 = unlimited; when --max_p, use MAX_PASSENGERS */
 
 static int track_passenger_pid(pid_t pid) {
     if (g_passenger_pids == NULL) {
@@ -372,6 +373,14 @@ static void wait_all_children(void) {
     }
 }
 
+/* Sleep for n seconds using wall-clock time (resistant to EINTR from SIGCHLD etc.) */
+static void sleep_seconds(int n) {
+    time_t end = time(NULL) + n;
+    while (time(NULL) < end) {
+        sleep(1);  /* may return early on signal; we loop until wall clock reaches end */
+    }
+}
+
 /* Run predefined test scenarios (does not modify normal shutdown logic) */
 static void run_test(int test_num) {
     shm_data_t *shm = ipc_get_shm();
@@ -381,7 +390,7 @@ static void run_test(int test_num) {
         /* TEST 1: Kill active driver, verify watchdog reassigns */
         printf("\n[TEST 1] Killing active driver after 5 seconds...\n");
         printf("[TEST 1] Expected: Watchdog detects dead driver, reassigns active_bus_id\n\n");
-        sleep(5);
+        sleep_seconds(5);
         if (shm) {
             sem_lock(SEM_SHM_MUTEX);
             int active = shm->active_bus_id;
@@ -401,7 +410,7 @@ static void run_test(int test_num) {
         /* TEST 2: Close station (SIGUSR2), verify remaining passengers transported */
         printf("\n[TEST 2] Sending SIGUSR2 to close station after 5 seconds...\n");
         printf("[TEST 2] Expected: No new passengers enter, existing ones are transported\n\n");
-        sleep(5);
+        sleep_seconds(5);
         if (g_dispatcher_pid > 0) {
             printf("[TEST 2] Sending SIGUSR2 to dispatcher (PID %d)\n", g_dispatcher_pid);
             kill(g_dispatcher_pid, SIGUSR2);
@@ -414,7 +423,7 @@ static void run_test(int test_num) {
         printf("\n[TEST 3] Sending SIGUSR1 every 3 seconds (5 times)...\n");
         printf("[TEST 3] Expected: Buses depart early with partial loads\n\n");
         for (int i = 0; i < 5; i++) {
-            sleep(3);
+            sleep_seconds(3);
             if (g_dispatcher_pid > 0) {
                 printf("[TEST 3] Sending SIGUSR1 #%d to dispatcher\n", i + 1);
                 kill(g_dispatcher_pid, SIGUSR1);
@@ -427,7 +436,7 @@ static void run_test(int test_num) {
         /* TEST 4: Kill a ticket office, verify others still serve tickets */
         printf("\n[TEST 4] Killing ticket office 0 after 5 seconds...\n");
         printf("[TEST 4] Expected: Remaining offices handle load, tickets still issued\n\n");
-        sleep(5);
+        sleep_seconds(5);
         if (g_ticket_office_pids[0] > 0) {
             printf("[TEST 4] Killing ticket office 0 (PID %d)\n", g_ticket_office_pids[0]);
             kill(g_ticket_office_pids[0], SIGKILL);
@@ -441,7 +450,7 @@ static void run_test(int test_num) {
         /* TEST 5: Stats consistency check after some runtime */
         printf("\n[TEST 5] Running simulation for 15 seconds, then checking stats consistency...\n");
         printf("[TEST 5] Expected: created == transported + waiting + in_office + on_bus + left_early\n\n");
-        sleep(15);
+        sleep_seconds(15);
         if (shm) {
             sem_lock(SEM_SHM_MUTEX);
             int created = shm->total_passengers_created;
@@ -464,6 +473,238 @@ static void run_test(int test_num) {
                 printf("[TEST 5] PASS: Stats are consistent!\n\n");
             } else {
                 printf("[TEST 5] FAIL: Inconsistency detected (diff=%d)\n\n", created - sum);
+            }
+        }
+        break;
+        
+    case 6:
+        /* TEST 6: Full ticket queue - SEM_TICKET_QUEUE_SLOTS was set to 0 before spawning in main() */
+        printf("\n[TEST 6] Testing FULL TICKET QUEUE scenario...\n");
+        printf("[TEST 6] Ticket queue was blocked before spawning; passengers block on sem_lock.\n");
+        printf("[TEST 6] Expected: No ticket requests sent, ticket offices idle; recovery when unblocked\n\n");
+        
+        sleep_seconds(2);  /* Let passengers start and block on SEM_TICKET_QUEUE_SLOTS */
+        
+        if (shm) {
+            int queue_sem_val = sem_getval(SEM_TICKET_QUEUE_SLOTS);
+            printf("[TEST 6] SEM_TICKET_QUEUE_SLOTS = %d (blocked)\n", queue_sem_val);
+            
+            /* Monitor for 10 seconds (queue already blocked) */
+            printf("[TEST 6] Monitoring for 10 seconds with blocked ticket queue...\n\n");
+            for (int i = 0; i < 10; i++) {
+                sleep_seconds(1);
+                sem_lock(SEM_SHM_MUTEX);
+                int in_office = shm->passengers_in_office;
+                int waiting = shm->passengers_waiting;
+                int tickets_sold = shm->tickets_sold_people;
+                sem_unlock(SEM_SHM_MUTEX);
+                
+                int queue_sem = sem_getval(SEM_TICKET_QUEUE_SLOTS);
+                printf("[TEST 6] t=%2d: in_office=%d, waiting=%d, tickets_sold=%d, queue_sem=%d\n",
+                       i + 1, in_office, waiting, tickets_sold, queue_sem);
+            }
+            
+            /* Restore semaphore */
+            printf("\n[TEST 6] Restoring SEM_TICKET_QUEUE_SLOTS to %d...\n", MAX_TICKET_QUEUE_REQUESTS);
+            sem_setval(SEM_TICKET_QUEUE_SLOTS, MAX_TICKET_QUEUE_REQUESTS);
+            
+            /* Wait for drain: everyone buys tickets and finishes (in_office==0, waiting==0, all accounted for) */
+            printf("[TEST 6] Waiting for all passengers to buy tickets and finish (drain, max 120s)...\n\n");
+            int drain_timeout = 120;
+            int drained = 0;
+            for (int t = 0; t < drain_timeout; t++) {
+                sleep_seconds(1);
+                sem_lock(SEM_SHM_MUTEX);
+                int created = shm->total_passengers_created;
+                int in_office = shm->passengers_in_office;
+                int waiting = shm->passengers_waiting;
+                int transported = shm->passengers_transported;
+                int left_early = shm->passengers_left_early;
+                int on_bus = 0;
+                for (int j = 0; j < MAX_BUSES; j++) {
+                    on_bus += shm->buses[j].passenger_count;
+                }
+                sem_unlock(SEM_SHM_MUTEX);
+                
+                int sum = transported + waiting + in_office + on_bus + left_early;
+                if (t % 5 == 0 || in_office == 0) {
+                    printf("[TEST 6] t=%3d: in_office=%d, waiting=%d, transported=%d, left_early=%d, on_bus=%d (created=%d)\n",
+                           t, in_office, waiting, transported, left_early, on_bus, created);
+                }
+                if (in_office == 0 && waiting == 0 && sum == created && created > 0) {
+                    printf("\n[TEST 6] Drain complete: all %d passengers finished (transported + left_early + on_bus).\n", created);
+                    drained = 1;
+                    break;
+                }
+            }
+            if (!drained) {
+                printf("\n[TEST 6] Timeout waiting for drain; check logs for stuck passengers.\n");
+            }
+            printf("\n[TEST 6] Test complete.\n\n");
+        }
+        break;
+        
+    case 7:
+        /* TEST 7: Full boarding queue - SEM_BOARDING_QUEUE_SLOTS was set to 0 before spawning in main() */
+        printf("\n[TEST 7] Testing FULL BOARDING QUEUE scenario...\n");
+        printf("[TEST 7] Boarding queue was blocked before spawning; passengers block when requesting board.\n");
+        printf("[TEST 7] Expected: No boarding requests sent to driver; recovery when unblocked\n\n");
+        
+        sleep_seconds(5);  /* Let passengers get tickets and reach boarding request (then block) */
+        
+        if (shm) {
+            int queue_sem_val = sem_getval(SEM_BOARDING_QUEUE_SLOTS);
+            printf("[TEST 7] SEM_BOARDING_QUEUE_SLOTS = %d (blocked)\n", queue_sem_val);
+            
+            /* Monitor for 10 seconds (queue already blocked) */
+            printf("[TEST 7] Monitoring for 10 seconds with blocked boarding queue...\n\n");
+            for (int i = 0; i < 10; i++) {
+                sleep_seconds(1);
+                sem_lock(SEM_SHM_MUTEX);
+                int waiting = shm->passengers_waiting;
+                int boarded = shm->boarded_people;
+                int transported = shm->passengers_transported;
+                int on_bus = 0;
+                for (int j = 0; j < MAX_BUSES; j++) {
+                    on_bus += shm->buses[j].passenger_count;
+                }
+                sem_unlock(SEM_SHM_MUTEX);
+                
+                int queue_sem = sem_getval(SEM_BOARDING_QUEUE_SLOTS);
+                printf("[TEST 7] t=%2d: waiting=%d, on_bus=%d, boarded=%d, transported=%d, queue_sem=%d\n",
+                       i + 1, waiting, on_bus, boarded, transported, queue_sem);
+            }
+            
+            /* Restore semaphore */
+            printf("\n[TEST 7] Restoring SEM_BOARDING_QUEUE_SLOTS to %d...\n", MAX_BOARDING_QUEUE_REQUESTS);
+            sem_setval(SEM_BOARDING_QUEUE_SLOTS, MAX_BOARDING_QUEUE_REQUESTS);
+            
+            /* Wait for drain: everyone boards or leaves (waiting==0, in_office==0, all accounted for) */
+            printf("[TEST 7] Waiting for all passengers to board or leave (drain, max 120s)...\n\n");
+            int drain_timeout = 120;
+            int drained = 0;
+            for (int t = 0; t < drain_timeout; t++) {
+                sleep_seconds(1);
+                sem_lock(SEM_SHM_MUTEX);
+                int created = shm->total_passengers_created;
+                int in_office = shm->passengers_in_office;
+                int waiting = shm->passengers_waiting;
+                int transported = shm->passengers_transported;
+                int left_early = shm->passengers_left_early;
+                int on_bus = 0;
+                for (int j = 0; j < MAX_BUSES; j++) {
+                    on_bus += shm->buses[j].passenger_count;
+                }
+                sem_unlock(SEM_SHM_MUTEX);
+                
+                int sum = transported + waiting + in_office + on_bus + left_early;
+                if (t % 5 == 0 || waiting == 0) {
+                    printf("[TEST 7] t=%3d: waiting=%d, in_office=%d, transported=%d, left_early=%d, on_bus=%d (created=%d)\n",
+                           t, waiting, in_office, transported, left_early, on_bus, created);
+                }
+                if (in_office == 0 && waiting == 0 && sum == created && created > 0) {
+                    printf("\n[TEST 7] Drain complete: all %d passengers finished (transported + left_early + on_bus).\n", created);
+                    drained = 1;
+                    break;
+                }
+            }
+            if (!drained) {
+                printf("\n[TEST 7] Timeout waiting for drain; check logs for stuck passengers.\n");
+            }
+            printf("\n[TEST 7] Test complete.\n\n");
+        }
+        break;
+        
+    case 8:
+        /* TEST 8: Combined stress - both queues were set to 0 before spawning in main() */
+        printf("\n[TEST 8] Testing BOTH QUEUES FULL simultaneously...\n");
+        printf("[TEST 8] Both ticket and boarding queues were blocked before spawning.\n");
+        printf("[TEST 8] Expected: Passengers block at ticket queue; no requests; full recovery when unblocked\n\n");
+        
+        sleep_seconds(2);  /* Let passengers start and block on SEM_TICKET_QUEUE_SLOTS */
+        
+        if (shm) {
+            printf("[TEST 8] SEM_TICKET_QUEUE_SLOTS=%d, SEM_BOARDING_QUEUE_SLOTS=%d (both blocked)\n",
+                   sem_getval(SEM_TICKET_QUEUE_SLOTS), sem_getval(SEM_BOARDING_QUEUE_SLOTS));
+            printf("[TEST 8] Monitoring for 15 seconds with both queues blocked...\n\n");
+            for (int i = 0; i < 15; i++) {
+                sleep_seconds(1);
+                sem_lock(SEM_SHM_MUTEX);
+                int in_office = shm->passengers_in_office;
+                int waiting = shm->passengers_waiting;
+                int boarded = shm->boarded_people;
+                int transported = shm->passengers_transported;
+                int created = shm->total_passengers_created;
+                sem_unlock(SEM_SHM_MUTEX);
+                
+                int ticket_sem = sem_getval(SEM_TICKET_QUEUE_SLOTS);
+                int boarding_sem = sem_getval(SEM_BOARDING_QUEUE_SLOTS);
+                printf("[TEST 8] t=%2d: created=%d, in_office=%d, waiting=%d, boarded=%d, transported=%d | ticket_sem=%d, boarding_sem=%d\n",
+                       i + 1, created, in_office, waiting, boarded, transported, ticket_sem, boarding_sem);
+            }
+            
+            /* Restore both semaphores */
+            printf("\n[TEST 8] Restoring both queues...\n");
+            sem_setval(SEM_TICKET_QUEUE_SLOTS, MAX_TICKET_QUEUE_REQUESTS);
+            sem_setval(SEM_BOARDING_QUEUE_SLOTS, MAX_BOARDING_QUEUE_REQUESTS);
+            
+            /* Wait for drain: everyone buys tickets, boards or leaves */
+            printf("[TEST 8] Waiting for all passengers to finish (drain, max 120s)...\n\n");
+            {
+                int drain_timeout = 120;
+                int drained = 0;
+                for (int t = 0; t < drain_timeout; t++) {
+                    sleep_seconds(1);
+                    sem_lock(SEM_SHM_MUTEX);
+                    int created = shm->total_passengers_created;
+                    int in_office = shm->passengers_in_office;
+                    int waiting = shm->passengers_waiting;
+                    int transported = shm->passengers_transported;
+                    int left_early = shm->passengers_left_early;
+                    int on_bus = 0;
+                    for (int j = 0; j < MAX_BUSES; j++) {
+                        on_bus += shm->buses[j].passenger_count;
+                    }
+                    sem_unlock(SEM_SHM_MUTEX);
+                    
+                    int sum = transported + waiting + in_office + on_bus + left_early;
+                    if (t % 5 == 0 || (in_office == 0 && waiting == 0)) {
+                        printf("[TEST 8] t=%3d: in_office=%d, waiting=%d, transported=%d, left_early=%d, on_bus=%d (created=%d)\n",
+                               t, in_office, waiting, transported, left_early, on_bus, created);
+                    }
+                    if (in_office == 0 && waiting == 0 && sum == created && created > 0) {
+                        printf("\n[TEST 8] Drain complete: all %d passengers finished.\n", created);
+                        drained = 1;
+                        break;
+                    }
+                }
+                if (!drained) {
+                    printf("\n[TEST 8] Timeout waiting for drain.\n");
+                }
+            }
+            
+            /* Final stats check */
+            sem_lock(SEM_SHM_MUTEX);
+            int created = shm->total_passengers_created;
+            int transported = shm->passengers_transported;
+            int waiting = shm->passengers_waiting;
+            int in_office = shm->passengers_in_office;
+            int left_early = shm->passengers_left_early;
+            int on_bus = 0;
+            for (int j = 0; j < MAX_BUSES; j++) {
+                on_bus += shm->buses[j].passenger_count;
+            }
+            sem_unlock(SEM_SHM_MUTEX);
+            
+            int sum = transported + waiting + in_office + on_bus + left_early;
+            printf("\n[TEST 8] FINAL STATS CHECK:\n");
+            printf("  created=%d\n", created);
+            printf("  transported=%d + waiting=%d + in_office=%d + on_bus=%d + left_early=%d = %d\n",
+                   transported, waiting, in_office, on_bus, left_early, sum);
+            if (created == sum) {
+                printf("[TEST 8] PASS: Stats are consistent after stress test!\n\n");
+            } else {
+                printf("[TEST 8] FAIL: Inconsistency detected (diff=%d)\n\n", created - sum);
             }
         }
         break;
@@ -516,16 +757,34 @@ static void apply_cli_options(int argc, char *argv[]) {
             setenv("BUS_FULL_DEPART", "1", 1);
             continue;
         }
+        if (strcmp(arg, "--max_p") == 0) {
+            /* Cap passenger count at MAX_PASSENGERS (from config.h) */
+            g_max_passengers = MAX_PASSENGERS;
+            continue;
+        }
         /* Test modes (side-effect only, don't change core shutdown) */
         if (strcmp(arg, "--test1") == 0) { g_test_mode = 1; continue; }
         if (strcmp(arg, "--test2") == 0) { g_test_mode = 2; continue; }
         if (strcmp(arg, "--test3") == 0) { g_test_mode = 3; continue; }
         if (strcmp(arg, "--test4") == 0) { g_test_mode = 4; continue; }
         if (strcmp(arg, "--test5") == 0) { g_test_mode = 5; continue; }
+        if (strcmp(arg, "--test6") == 0) { g_test_mode = 6; continue; }
+        if (strcmp(arg, "--test7") == 0) { g_test_mode = 7; continue; }
+        if (strcmp(arg, "--test8") == 0) { g_test_mode = 8; continue; }
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             printf("Usage: ./main [--log=verbose|summary|minimal] [--summary] [--quiet|-q]\n");
             printf("             [--perf]  (disable simulated sleeps for performance testing)\n");
             printf("             [--full]  (depart when bus is full, don't wait for scheduled time)\n");
+            printf("             [--max_p] (cap passengers at MAX_PASSENGERS from config; used with tests)\n");
+            printf("\nTest modes:\n");
+            printf("  --test1  Kill active driver, verify watchdog reassigns\n");
+            printf("  --test2  Close station (SIGUSR2), verify drain\n");
+            printf("  --test3  Force early departures (SIGUSR1)\n");
+            printf("  --test4  Kill ticket office, verify others handle load\n");
+            printf("  --test5  Stats consistency check\n");
+            printf("  --test6  Full ticket queue test (block SEM_TICKET_QUEUE_SLOTS)\n");
+            printf("  --test7  Full boarding queue test (block SEM_BOARDING_QUEUE_SLOTS)\n");
+            printf("  --test8  Combined stress test (both queues full)\n");
             exit(0);
         }
     }
@@ -542,7 +801,11 @@ int main(int argc, char *argv[]) {
     printf("  Buses: %d (capacity: %d passengers, %d bikes)\n", 
            MAX_BUSES, BUS_CAPACITY, BIKE_CAPACITY);
     printf("  Ticket offices: %d\n", TICKET_OFFICES);
-    printf("  Passengers: continuous until fork() fails or station closes\n");
+    if (g_max_passengers > 0) {
+        printf("  Passengers: max %d (--max_p, MAX_PASSENGERS from config)\n", g_max_passengers);
+    } else {
+        printf("  Passengers: continuous until fork() fails or station closes\n");
+    }
     printf("  Boarding interval: %d seconds\n", BOARDING_INTERVAL);
     printf("  VIP percentage: %d%%\n", VIP_PERCENT);
     printf("========================================\n\n");
@@ -588,6 +851,21 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     
+    /* Verify dispatcher is still running (e.g. execl didn't fail - run from build dir) */
+    reap_children();
+    if (g_dispatcher_pid == 0) {
+        fprintf(stderr, "[MAIN] Dispatcher exited immediately. Run from the directory that contains the binaries, e.g.:\n");
+        fprintf(stderr, "  cd build && ./main [options]\n");
+        ipc_detach_all();
+        ipc_cleanup_all();
+        return EXIT_FAILURE;
+    }
+    if (kill(g_dispatcher_pid, 0) != 0) {
+        fprintf(stderr, "[MAIN] Dispatcher (PID %d) is not running.\n", g_dispatcher_pid);
+        ipc_detach_all();
+        ipc_cleanup_all();
+        return EXIT_FAILURE;
+    }
 
     printf("[MAIN] Starting ticket offices...\n");
     for (int i = 0; i < TICKET_OFFICES; i++) {
@@ -630,76 +908,140 @@ int main(int argc, char *argv[]) {
     /* Also log dispatcher PID for easy grepping */
     log_master(LOG_INFO, "DISPATCHER_PID=%d", g_dispatcher_pid);
     
-    /* Start test runner if a test mode was selected */
     if (g_test_mode > 0) {
+        /* Test mode: spawn up to g_max_passengers (MAX_PASSENGERS when --max_p), run test, then shutdown */
         printf("\n========================================\n");
         printf("   RUNNING TEST %d\n", g_test_mode);
         printf("========================================\n");
-        pid_t test_pid = fork();
-        if (test_pid == 0) {
-            /* Child: run test in parallel with main simulation */
-            run_test(g_test_mode);
-            _exit(0);
+        
+        /* Block queues BEFORE spawning so passengers block on semaphore (test 6/7/8) */
+        if (g_test_mode == 6) {
+            printf("[MAIN] Test 6: Blocking ticket queue (SEM_TICKET_QUEUE_SLOTS=0) before spawning.\n");
+            sem_setval(SEM_TICKET_QUEUE_SLOTS, 0);
+        } else if (g_test_mode == 7) {
+            printf("[MAIN] Test 7: Blocking boarding queue (SEM_BOARDING_QUEUE_SLOTS=0) before spawning.\n");
+            sem_setval(SEM_BOARDING_QUEUE_SLOTS, 0);
+        } else if (g_test_mode == 8) {
+            printf("[MAIN] Test 8: Blocking both ticket and boarding queues before spawning.\n");
+            sem_setval(SEM_TICKET_QUEUE_SLOTS, 0);
+            sem_setval(SEM_BOARDING_QUEUE_SLOTS, 0);
         }
-    }
-    
-    
-    while (g_running) {
-        shm_data_t *shm = ipc_get_shm();
-        if (shm) {
-            sem_lock(SEM_SHM_MUTEX);
-            int stop_spawning = shm->spawning_stopped;
-            sem_unlock(SEM_SHM_MUTEX);
-            if (stop_spawning) {
-                printf("[MAIN] Spawning stopped by dispatcher (station closed) or previous fork() error\n");
+        
+        int limit = g_max_passengers > 0 ? g_max_passengers : 50;  /* default 50 if no --max_p */
+        if (g_max_passengers > 0) {
+            printf("[MAIN] Test mode: spawning %d passengers (MAX_PASSENGERS from config)...\n", limit);
+        } else {
+            printf("[MAIN] Test mode: spawning %d passengers (use --max_p for MAX_PASSENGERS)...\n", limit);
+        }
+        printf("[MAIN] (Run from directory containing dispatcher, driver, passenger, ticket_office)\n");
+        while (g_passengers_spawned < limit && g_running) {
+            pid_t pid = spawn_passenger();
+            if (pid == -1) {
+                printf("[MAIN] fork() failed after %d passengers\n", g_passengers_spawned);
                 break;
             }
-        }
-
-        pid_t pid = spawn_passenger();
-        if (pid == -1) {
-            printf("[MAIN] fork() failed - stopping passenger creation\n");
-            shm_data_t *shm2 = ipc_get_shm();
-            if (shm2) {
-                sem_lock(SEM_SHM_MUTEX);
-                shm2->spawning_stopped = true;
-                sem_unlock(SEM_SHM_MUTEX);
+            g_passengers_spawned++;
+            track_passenger_pid(pid);
+            reap_children();
+            if (!log_is_perf_mode()) {
+                int delay_ms = MIN_ARRIVAL_MS + rand() % (MAX_ARRIVAL_MS - MIN_ARRIVAL_MS + 1);
+                usleep(delay_ms * 1000);
             }
-            break;
         }
-
-        g_passengers_spawned++;
-        track_passenger_pid(pid);
-        if ((g_passengers_spawned % 1000) == 0 && !is_minimal) {
-            printf("[MAIN] Spawned %d passenger processes so far\n", g_passengers_spawned);
-        }
-
-        reap_children();
-
-        /* Random delay between passenger arrivals (can be tuned in config) */
-        if (!log_is_perf_mode()) {
-            int delay_ms = MIN_ARRIVAL_MS + rand() % (MAX_ARRIVAL_MS - MIN_ARRIVAL_MS + 1);
-            usleep(delay_ms * 1000);
-        }
-    }
-    
-    printf(COLOR_YELLOW "\n[MAIN] Passenger creation stopped. Monitoring simulation...\n\n" COLOR_RESET);
-    
-
-    while (g_running) {
-
-        reap_children();
+        printf("[MAIN] Spawned %d passengers. Running test...\n\n", g_passengers_spawned);
         
-        /* Check progress */
-        if (!check_simulation_progress()) {
-            break;
+        run_test(g_test_mode);
+        
+        printf(COLOR_GREEN "\n[MAIN] Test %d finished. Shutting down...\n\n" COLOR_RESET, g_test_mode);
+    } else {
+        /* Normal mode: spawn passengers until station closes, fork fails, or --max_p limit */
+        while (g_running) {
+            if (g_max_passengers > 0 && g_passengers_spawned >= g_max_passengers) {
+                printf("[MAIN] Reached passenger limit %d (--max_p)\n", g_max_passengers);
+                /* Stop spawning only; do NOT close station (SIGUSR2) so ticket offices keep serving.
+                 * Dispatcher will exit when drain is complete (check_simulation_end). */
+                shm_data_t *shm_mp = ipc_get_shm();
+                if (shm_mp) {
+                    sem_lock(SEM_SHM_MUTEX);
+                    shm_mp->spawning_stopped = true;
+                    sem_unlock(SEM_SHM_MUTEX);
+                    printf("[MAIN] spawning_stopped=true; station stays open until all passengers are done.\n");
+                }
+                break;
+            }
+            shm_data_t *shm = ipc_get_shm();
+            if (shm) {
+                sem_lock(SEM_SHM_MUTEX);
+                int stop_spawning = shm->spawning_stopped;
+                sem_unlock(SEM_SHM_MUTEX);
+                if (stop_spawning) {
+                    printf("[MAIN] Spawning stopped by dispatcher (station closed) or previous fork() error\n");
+                    break;
+                }
+            }
+
+            pid_t pid = spawn_passenger();
+            if (pid == -1) {
+                printf("[MAIN] fork() failed - stopping passenger creation\n");
+                shm_data_t *shm2 = ipc_get_shm();
+                if (shm2) {
+                    sem_lock(SEM_SHM_MUTEX);
+                    shm2->spawning_stopped = true;
+                    sem_unlock(SEM_SHM_MUTEX);
+                }
+                break;
+            }
+
+            g_passengers_spawned++;
+            track_passenger_pid(pid);
+            if ((g_passengers_spawned % 1000) == 0 && !is_minimal) {
+                printf("[MAIN] Spawned %d passenger processes so far\n", g_passengers_spawned);
+            }
+
+            reap_children();
+
+            if (!log_is_perf_mode()) {
+                int delay_ms = MIN_ARRIVAL_MS + rand() % (MAX_ARRIVAL_MS - MIN_ARRIVAL_MS + 1);
+                usleep(delay_ms * 1000);
+            }
         }
         
-        /* Wait before checking again */
-        sleep(5);
+        printf(COLOR_YELLOW "\n[MAIN] Passenger creation stopped. Monitoring simulation...\n\n" COLOR_RESET);
+        
+        while (g_running) {
+            reap_children();
+            if (!check_simulation_progress()) {
+                break;
+            }
+            /* When spawning_stopped (--max_p or SIGUSR2), dispatcher may wait for buses_done forever.
+             * If drain is complete (all passengers accounted for), signal dispatcher to shutdown. */
+            if (g_dispatcher_pid > 0) {
+                shm_data_t *shm_d = ipc_get_shm();
+                if (shm_d) {
+                    sem_lock(SEM_SHM_MUTEX);
+                    int stop = shm_d->spawning_stopped;
+                    int created = shm_d->total_passengers_created;
+                    int waiting = shm_d->passengers_waiting;
+                    int in_office = shm_d->passengers_in_office;
+                    int transported = shm_d->passengers_transported;
+                    int left_early = shm_d->passengers_left_early;
+                    int on_bus = 0;
+                    for (int j = 0; j < MAX_BUSES; j++) {
+                        on_bus += shm_d->buses[j].passenger_count;
+                    }
+                    sem_unlock(SEM_SHM_MUTEX);
+                    int sum = transported + waiting + in_office + on_bus + left_early;
+                    if (stop && created > 0 && waiting == 0 && in_office == 0 && sum == created) {
+                        printf("[MAIN] Drain complete (%d passengers); signaling dispatcher to shutdown.\n", created);
+                        kill(g_dispatcher_pid, SIGTERM);
+                    }
+                }
+            }
+            sleep(5);
+        }
+        
+        printf(COLOR_GREEN "\n[MAIN] Simulation complete. Shutting down...\n\n" COLOR_RESET);
     }
-    
-    printf(COLOR_GREEN "\n[MAIN] Simulation complete. Shutting down...\n\n" COLOR_RESET);
     
 
     

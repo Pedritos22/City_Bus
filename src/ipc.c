@@ -337,14 +337,24 @@ int sem_lock(int sem_num) {
     op.sem_op = -1;
     op.sem_flg = 0;
 
-    if (semop(g_semid, &op, 1) == -1) {
-        if (errno == EINTR || errno == EIDRM || errno == EINVAL) {
+    while (1) {
+        if (semop(g_semid, &op, 1) == 0) {
+            return 0;  /* Success */
+        }
+        
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT from Ctrl+Z/fg) - retry */
+            continue;
+        }
+        
+        if (errno == EIDRM || errno == EINVAL) {
+            /* Semaphore set removed - simulation ending */
             return -1;
         }
+        
         perror("sem_lock: semop failed");
         exit(EXIT_FAILURE);
     }
-    return 0;
 }
 
 void sem_unlock(int sem_num) {
@@ -414,97 +424,177 @@ int ipc_get_msgid_dispatch(void) {
  */
 
 int msg_send_ticket(ticket_msg_t *msg) {
-    if (msgsnd(g_msgid_ticket, msg, sizeof(ticket_msg_t) - sizeof(long), 0) == -1) {
-        if (errno != EINTR && errno != EIDRM) {
+    while (1) {
+        if (msgsnd(g_msgid_ticket, msg, sizeof(ticket_msg_t) - sizeof(long), 0) == 0) {
+            return 0;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != EIDRM) {
             perror("msg_send_ticket: msgsnd failed");
         }
         return -1;
     }
-    return 0;
 }
 
 /* Send ticket response to separate response queue */
 int msg_send_ticket_resp(ticket_msg_t *msg) {
-    if (msgsnd(g_msgid_ticket_resp, msg, sizeof(ticket_msg_t) - sizeof(long), 0) == -1) {
-        if (errno != EINTR && errno != EIDRM) {
+    while (1) {
+        if (msgsnd(g_msgid_ticket_resp, msg, sizeof(ticket_msg_t) - sizeof(long), 0) == 0) {
+            return 0;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != EIDRM) {
             perror("msg_send_ticket_resp: msgsnd failed");
         }
         return -1;
     }
-    return 0;
 }
 
 ssize_t msg_recv_ticket(ticket_msg_t *msg, long mtype, int flags) {
-    ssize_t ret = msgrcv(g_msgid_ticket, msg, sizeof(ticket_msg_t) - sizeof(long), mtype, flags);
-    if (ret == -1 && errno != ENOMSG && errno != EINTR && errno != EIDRM) {
-        perror("msg_recv_ticket: msgrcv failed");
+    ssize_t ret;
+    while (1) {
+        ret = msgrcv(g_msgid_ticket, msg, sizeof(ticket_msg_t) - sizeof(long), mtype, flags);
+        if (ret >= 0) {
+            return ret;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != ENOMSG && errno != EIDRM) {
+            perror("msg_recv_ticket: msgrcv failed");
+        }
+        return ret;
     }
-    return ret;
 }
 
 /* Receive ticket response from separate response queue */
 ssize_t msg_recv_ticket_resp(ticket_msg_t *msg, long mtype, int flags) {
-    ssize_t ret = msgrcv(g_msgid_ticket_resp, msg, sizeof(ticket_msg_t) - sizeof(long), mtype, flags);
-    if (ret == -1 && errno != ENOMSG && errno != EINTR && errno != EIDRM) {
-        perror("msg_recv_ticket_resp: msgrcv failed");
+    ssize_t ret;
+    while (1) {
+        ret = msgrcv(g_msgid_ticket_resp, msg, sizeof(ticket_msg_t) - sizeof(long), mtype, flags);
+        if (ret >= 0) {
+            return ret;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != ENOMSG && errno != EIDRM) {
+            perror("msg_recv_ticket_resp: msgrcv failed");
+        }
+        return ret;
     }
-    return ret;
 }
 
 int msg_send_boarding(boarding_msg_t *msg) {
-    if (msgsnd(g_msgid_boarding, msg, sizeof(boarding_msg_t) - sizeof(long), 0) == -1) {
-        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
+    while (1) {
+        if (msgsnd(g_msgid_boarding, msg, sizeof(boarding_msg_t) - sizeof(long), 0) == 0) {
+            return 0;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != EIDRM && errno != EINVAL) {
             perror("msg_send_boarding: msgsnd failed");
         }
         return -1;
     }
-    return 0;
 }
 
 /* Send boarding response to separate response queue - always has room */
 int msg_send_boarding_resp(boarding_msg_t *msg) {
-    if (msgsnd(g_msgid_boarding_resp, msg, sizeof(boarding_msg_t) - sizeof(long), 0) == -1) {
-        if (errno != EINTR && errno != EIDRM && errno != EINVAL) {
+    while (1) {
+        if (msgsnd(g_msgid_boarding_resp, msg, sizeof(boarding_msg_t) - sizeof(long), 0) == 0) {
+            return 0;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != EIDRM && errno != EINVAL) {
             perror("msg_send_boarding_resp: msgsnd failed");
         }
         return -1;
     }
-    return 0;
 }
 
 ssize_t msg_recv_boarding(boarding_msg_t *msg, long mtype, int flags) {
-    ssize_t ret = msgrcv(g_msgid_boarding, msg, sizeof(boarding_msg_t) - sizeof(long), mtype, flags);
-    if (ret == -1 && errno != ENOMSG && errno != EINTR && errno != EIDRM && errno != EINVAL) {
-        perror("msg_recv_boarding: msgrcv failed");
+    ssize_t ret;
+    while (1) {
+        ret = msgrcv(g_msgid_boarding, msg, sizeof(boarding_msg_t) - sizeof(long), mtype, flags);
+        if (ret >= 0) {
+            return ret;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != ENOMSG && errno != EIDRM && errno != EINVAL) {
+            perror("msg_recv_boarding: msgrcv failed");
+        }
+        return ret;
     }
-    return ret;
 }
 
 /* Receive boarding response from separate response queue */
 ssize_t msg_recv_boarding_resp(boarding_msg_t *msg, long mtype, int flags) {
-    ssize_t ret = msgrcv(g_msgid_boarding_resp, msg, sizeof(boarding_msg_t) - sizeof(long), mtype, flags);
-    if (ret == -1 && errno != ENOMSG && errno != EINTR && errno != EIDRM && errno != EINVAL) {
-        perror("msg_recv_boarding_resp: msgrcv failed");
+    ssize_t ret;
+    while (1) {
+        ret = msgrcv(g_msgid_boarding_resp, msg, sizeof(boarding_msg_t) - sizeof(long), mtype, flags);
+        if (ret >= 0) {
+            return ret;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != ENOMSG && errno != EIDRM && errno != EINVAL) {
+            perror("msg_recv_boarding_resp: msgrcv failed");
+        }
+        return ret;
     }
-    return ret;
 }
 
 int msg_send_dispatch(dispatch_msg_t *msg) {
-    if (msgsnd(g_msgid_dispatch, msg, sizeof(dispatch_msg_t) - sizeof(long), 0) == -1) {
-        if (errno != EINTR && errno != EIDRM) {
+    while (1) {
+        if (msgsnd(g_msgid_dispatch, msg, sizeof(dispatch_msg_t) - sizeof(long), 0) == 0) {
+            return 0;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != EIDRM) {
             perror("msg_send_dispatch: msgsnd failed");
         }
         return -1;
     }
-    return 0;
 }
 
 ssize_t msg_recv_dispatch(dispatch_msg_t *msg, long mtype, int flags) {
-    ssize_t ret = msgrcv(g_msgid_dispatch, msg, sizeof(dispatch_msg_t) - sizeof(long), mtype, flags);
-    if (ret == -1 && errno != ENOMSG && errno != EINTR && errno != EIDRM) {
-        perror("msg_recv_dispatch: msgrcv failed");
+    ssize_t ret;
+    while (1) {
+        ret = msgrcv(g_msgid_dispatch, msg, sizeof(dispatch_msg_t) - sizeof(long), mtype, flags);
+        if (ret >= 0) {
+            return ret;
+        }
+        if (errno == EINTR) {
+            /* Signal received (e.g., SIGTSTP/SIGCONT) - retry */
+            continue;
+        }
+        if (errno != ENOMSG && errno != EIDRM) {
+            perror("msg_recv_dispatch: msgrcv failed");
+        }
+        return ret;
     }
-    return ret;
 }
 
 /* Safeguard: check message queue depths and warn if getting high */
