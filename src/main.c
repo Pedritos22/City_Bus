@@ -26,6 +26,7 @@ static pid_t *g_passenger_pids = NULL;
 static int g_passenger_count = 0;
 static int g_passenger_capacity = 0;
 static int g_passengers_spawned = 0;
+static int g_test_mode = 0;  /* 0 = normal, 1-5 = test modes */
 
 static int track_passenger_pid(pid_t pid) {
     if (g_passenger_pids == NULL) {
@@ -371,6 +372,107 @@ static void wait_all_children(void) {
     }
 }
 
+/* Run predefined test scenarios (does not modify normal shutdown logic) */
+static void run_test(int test_num) {
+    shm_data_t *shm = ipc_get_shm();
+    
+    switch (test_num) {
+    case 1:
+        /* TEST 1: Kill active driver, verify watchdog reassigns */
+        printf("\n[TEST 1] Killing active driver after 5 seconds...\n");
+        printf("[TEST 1] Expected: Watchdog detects dead driver, reassigns active_bus_id\n\n");
+        sleep(5);
+        if (shm) {
+            sem_lock(SEM_SHM_MUTEX);
+            int active = shm->active_bus_id;
+            pid_t driver_pid = (active >= 0 && active < MAX_BUSES) ? shm->driver_pids[active] : 0;
+            sem_unlock(SEM_SHM_MUTEX);
+            if (driver_pid > 0) {
+                printf("[TEST 1] Killing driver %d (PID %d) with SIGKILL\n", active, driver_pid);
+                kill(driver_pid, SIGKILL);
+                printf("[TEST 1] Watch dispatcher.log for watchdog reassignment\n\n");
+            } else {
+                printf("[TEST 1] No active driver found to kill\n\n");
+            }
+        }
+        break;
+        
+    case 2:
+        /* TEST 2: Close station (SIGUSR2), verify remaining passengers transported */
+        printf("\n[TEST 2] Sending SIGUSR2 to close station after 5 seconds...\n");
+        printf("[TEST 2] Expected: No new passengers enter, existing ones are transported\n\n");
+        sleep(5);
+        if (g_dispatcher_pid > 0) {
+            printf("[TEST 2] Sending SIGUSR2 to dispatcher (PID %d)\n", g_dispatcher_pid);
+            kill(g_dispatcher_pid, SIGUSR2);
+            printf("[TEST 2] Station closed. Watching for drain...\n\n");
+        }
+        break;
+        
+    case 3:
+        /* TEST 3: Force early departures (SIGUSR1 multiple times) */
+        printf("\n[TEST 3] Sending SIGUSR1 every 3 seconds (5 times)...\n");
+        printf("[TEST 3] Expected: Buses depart early with partial loads\n\n");
+        for (int i = 0; i < 5; i++) {
+            sleep(3);
+            if (g_dispatcher_pid > 0) {
+                printf("[TEST 3] Sending SIGUSR1 #%d to dispatcher\n", i + 1);
+                kill(g_dispatcher_pid, SIGUSR1);
+            }
+        }
+        printf("[TEST 3] Check driver.log for early departures\n\n");
+        break;
+        
+    case 4:
+        /* TEST 4: Kill a ticket office, verify others still serve tickets */
+        printf("\n[TEST 4] Killing ticket office 0 after 5 seconds...\n");
+        printf("[TEST 4] Expected: Remaining offices handle load, tickets still issued\n\n");
+        sleep(5);
+        if (g_ticket_office_pids[0] > 0) {
+            printf("[TEST 4] Killing ticket office 0 (PID %d)\n", g_ticket_office_pids[0]);
+            kill(g_ticket_office_pids[0], SIGKILL);
+            g_ticket_office_pids[0] = 0;
+        } else {
+            printf("[TEST 4] Ticket office 0 not running\n");
+        }
+        break;
+        
+    case 5:
+        /* TEST 5: Stats consistency check after some runtime */
+        printf("\n[TEST 5] Running simulation for 15 seconds, then checking stats consistency...\n");
+        printf("[TEST 5] Expected: created == transported + waiting + in_office + on_bus + left_early\n\n");
+        sleep(15);
+        if (shm) {
+            sem_lock(SEM_SHM_MUTEX);
+            int created = shm->total_passengers_created;
+            int transported = shm->passengers_transported;
+            int waiting = shm->passengers_waiting;
+            int in_office = shm->passengers_in_office;
+            int left_early = shm->passengers_left_early;
+            int on_bus = 0;
+            for (int i = 0; i < MAX_BUSES; i++) {
+                on_bus += shm->buses[i].passenger_count;
+            }
+            sem_unlock(SEM_SHM_MUTEX);
+            
+            int sum = transported + waiting + in_office + on_bus + left_early;
+            printf("[TEST 5] STATS CHECK:\n");
+            printf("  created=%d\n", created);
+            printf("  transported=%d + waiting=%d + in_office=%d + on_bus=%d + left_early=%d = %d\n",
+                   transported, waiting, in_office, on_bus, left_early, sum);
+            if (created == sum) {
+                printf("[TEST 5] PASS: Stats are consistent!\n\n");
+            } else {
+                printf("[TEST 5] FAIL: Inconsistency detected (diff=%d)\n\n", created - sum);
+            }
+        }
+        break;
+        
+    default:
+        printf("[TEST] Unknown test number: %d\n", test_num);
+    }
+}
+
 static void apply_cli_options(int argc, char *argv[]) {
     /*
      *   --log=verbose|summary|minimal
@@ -414,10 +516,27 @@ static void apply_cli_options(int argc, char *argv[]) {
             setenv("BUS_FULL_DEPART", "1", 1);
             continue;
         }
+        /* Test modes (side-effect only, don't change core shutdown) */
+        if (strcmp(arg, "--test1") == 0) { g_test_mode = 1; continue; }
+        if (strcmp(arg, "--test2") == 0) { g_test_mode = 2; continue; }
+        if (strcmp(arg, "--test3") == 0) { g_test_mode = 3; continue; }
+        if (strcmp(arg, "--test4") == 0) { g_test_mode = 4; continue; }
+        if (strcmp(arg, "--test5") == 0) { g_test_mode = 5; continue; }
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
-            printf("Usage: ./main [--log=verbose|summary|minimal] [--summary] [--quiet|-q]\n");
-            printf("             [--perf]  (disable simulated sleeps for performance testing)\n");
-            printf("             [--full]  (depart when bus is full, don't wait for scheduled time)\n");
+            printf("Usage: ./main [OPTIONS]\n\n");
+            printf("Logging:\n");
+            printf("  --log=verbose|summary|minimal  Set logging level\n");
+            printf("  --summary                      Same as --log=summary\n");
+            printf("  --quiet, -q                    Same as --log=minimal\n\n");
+            printf("Simulation:\n");
+            printf("  --perf       Disable sleeps for performance testing\n");
+            printf("  --full       Depart when bus is full (don't wait for scheduled time)\n\n");
+            printf("Tests (run alongside normal simulation):\n");
+            printf("  --test1      Kill active driver, verify watchdog recovery\n");
+            printf("  --test2      Close station (SIGUSR2), verify drain\n");
+            printf("  --test3      Force early departures (SIGUSR1 x5)\n");
+            printf("  --test4      Kill ticket office, verify continued service\n");
+            printf("  --test5      Stats consistency check\n");
             exit(0);
         }
     }
@@ -521,6 +640,19 @@ int main(int argc, char *argv[]) {
     
     /* Also log dispatcher PID for easy grepping */
     log_master(LOG_INFO, "DISPATCHER_PID=%d", g_dispatcher_pid);
+    
+    /* Start test runner if a test mode was selected */
+    if (g_test_mode > 0) {
+        printf("\n========================================\n");
+        printf("   RUNNING TEST %d\n", g_test_mode);
+        printf("========================================\n");
+        pid_t test_pid = fork();
+        if (test_pid == 0) {
+            /* Child: run test in parallel with main simulation */
+            run_test(g_test_mode);
+            _exit(0);
+        }
+    }
     
     
     while (g_running) {
