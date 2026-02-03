@@ -18,8 +18,9 @@ $ ./main
 $ ./main --log=verbose      # Pełne logowanie (domyślnie)
 $ ./main --summary          # Logowanie tylko ważnych wydarzeń
 $ ./main --quiet            # Logowanie tylko błędów
-$ ./main --perf             Tryb wydajnościowy (bez opóźnień symulacyjnych)
+$ ./main --perf             # Tryb wydajnościowy (bez opóźnień symulacyjnych)
 $ ./main --full             # Autobusy odjeżdżają gdy są pełne
+$ ./main --max_p            # Ilość stworzonych pasazerow, zdefiniowana w config.h jako MAX_PASSENGER
 ```
 
 ## Założenia projektowe kodu
@@ -369,6 +370,30 @@ Test polega na sprawdzeniu poprawności wszystkich statystyk i wiarygodności da
 
 ```console
 $ ./main --test5
+```
+
+### 6. Test pełnej kolejki biletowej
+[TEST6](https://github.com/Pedritos22/City_Bus/blob/e54f43eceab2ffe776e354152896518fcb72ef29/src/main.c#L480-L545)
+Test polega na zapchaniu całej kolejki do kasy biletowej poprzez ustawienie SEM_TICKET_QUEUE_SLOTS na 0.
+
+```console
+$ ./main --test6
+```
+
+### 7. Test pełnej kolejki do busa.
+[TEST7](https://github.com/Pedritos22/City_Bus/blob/e54f43eceab2ffe776e354152896518fcb72ef29/src/main.c#L547-L616)
+Test polega na zapchaniu całej kolejki do busa poprzez ustawienie SEM_BOARDING_QUEUE_SLOTS na 0.
+
+```console
+$ ./main --test7
+```
+
+### 8. Test pełnej kolejki biletowej oraz busa w tym samym momencie.
+[TEST8](https://github.com/Pedritos22/City_Bus/blob/e54f43eceab2ffe776e354152896518fcb72ef29/src/main.c#L618-L710)
+Test polega na zapchaniu obu kolejek poprzez ustawienie SEM_TICKET_QUEUE_SLOTS oraz SEM_BOARDING_QUEUE_SLOTS na 0.
+
+```console
+$ ./main --test8
 ```
 
 ## Napotkane problemy

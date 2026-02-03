@@ -10,7 +10,7 @@ typedef enum {
     LOG_DEBUG // DEBUG messages
 } log_level_t;
 
-/* ANSI color codes for pretty stdout output (logs to files stay plain) */
+// ANSI color codes (log files stay plain)
 #define COLOR_RESET "\033[0m"
 #define COLOR_RED   "\033[31m"
 #define COLOR_GREEN "\033[32m"
