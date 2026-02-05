@@ -734,6 +734,51 @@ static void run_test(int test_num) {
 
             /* Verify recovery */
             sleep_seconds(10);
+        } else {
+            printf("[TEST 9] No ticket_office 0\n");
+        }
+        break;
+
+    case 10:
+        /* TEST 10: Stop driver 0 with SIGSTOP, boarding queue fills up */
+        printf("\n[TEST 10] Stopping driver 0 with SIGSTOP...\n");
+        printf("[TEST 10] Expected: Boarding queue fills; \n");
+        printf("[TEST 10] Then resume with SIGCONT to verify recovery\n\n");
+
+        sleep_seconds(5);  /* Let system stabilize */
+
+        if (g_driver_pids[0] > 0) {
+            printf("[TEST 10] Sending SIGSTOP to driver 0 (PID %d)\n",
+                   g_driver_pids[0]);
+            kill(g_driver_pids[0], SIGSTOP);
+
+            /* Monitor boarding queue / waiting */
+            for (int i = 0; i < 10; i++) {
+                sleep_seconds(1);
+                if (shm) {
+                    sem_lock(SEM_SHM_MUTEX);
+                    int waiting = shm->passengers_waiting;
+                    int boarded = shm->boarded_people;
+                    int transported = shm->passengers_transported;
+                    int on_bus = 0;
+                    for (int j = 0; j < MAX_BUSES; j++) {
+                        on_bus += shm->buses[j].passenger_count;
+                    }
+                    sem_unlock(SEM_SHM_MUTEX);
+                    int queue_sem = sem_getval(SEM_BOARDING_QUEUE_SLOTS);
+                    printf("[TEST 10] t=%2d: waiting=%d, boarded=%d, transported=%d, on_bus=%d, queue_sem=%d\n",
+                           i + 1, waiting, boarded, transported, on_bus, queue_sem);
+                }
+            }
+
+            /* Resume */
+            printf("[TEST 10] Resuming driver 0 with SIGCONT\n");
+            kill(g_driver_pids[0], SIGCONT);
+
+            /* Verify recovery */
+            sleep_seconds(10);
+        } else {
+            printf("[TEST 10] No driver 0\n");
         }
         break;
 
@@ -800,6 +845,7 @@ static void apply_cli_options(int argc, char *argv[]) {
         if (strcmp(arg, "--test7") == 0) { g_test_mode = 7; continue; }
         if (strcmp(arg, "--test8") == 0) { g_test_mode = 8; continue; }
         if (strcmp(arg, "--test9") == 0) { g_test_mode = 9; continue; }
+        if (strcmp(arg, "--test10") == 0) { g_test_mode = 10; continue; }
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             printf("Usage: ./main [--log=verbose|summary|minimal] [--summary] [--quiet|-q]\n");
             printf("             [--perf]  (disable simulated sleeps for performance testing)\n");
@@ -815,6 +861,7 @@ static void apply_cli_options(int argc, char *argv[]) {
             printf("  --test7  Full boarding queue test (block SEM_BOARDING_QUEUE_SLOTS)\n");
             printf("  --test8  Combined stress test (both queues full)\n");
             printf("  --test9  Full message queue test for ticket office 0\n");
+            printf("  --test10  Full message queue test for driver 0\n");
             exit(0);
         }
     }
