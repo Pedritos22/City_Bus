@@ -708,7 +708,35 @@ static void run_test(int test_num) {
             }
         }
         break;
-        
+    
+    case 9:
+        /* TEST 9: Stop ticket office with SIGSTOP, queue fills up */
+        printf("\n[TEST 9] Stopping ticket office 0 with SIGSTOP...\n");
+        printf("[TEST 9] Expected: Queue fills up, other offices handle load\n");
+        printf("[TEST 9] Then resume with SIGCONT to verify recovery\n\n");
+
+        sleep_seconds(5);  /* Let system stabilize */
+
+        if (g_ticket_office_pids[0] > 0) {
+            printf("[TEST 9] Sending SIGSTOP to ticket office 0 (PID %d)\n",
+                g_ticket_office_pids[0]);
+            kill(g_ticket_office_pids[0], SIGSTOP);
+
+            /* Monitor queue filling */
+            for (int i = 0; i < 10; i++) {
+                sleep_seconds(1);
+                /* Check queue depth, in_office, etc. */
+            }
+
+            /* Resume */
+            printf("[TEST 9] Resuming ticket office 0 with SIGCONT\n");
+            kill(g_ticket_office_pids[0], SIGCONT);
+
+            /* Verify recovery */
+            sleep_seconds(10);
+        }
+        break;
+
     default:
         printf("[TEST] Unknown test number: %d\n", test_num);
     }
@@ -771,6 +799,7 @@ static void apply_cli_options(int argc, char *argv[]) {
         if (strcmp(arg, "--test6") == 0) { g_test_mode = 6; continue; }
         if (strcmp(arg, "--test7") == 0) { g_test_mode = 7; continue; }
         if (strcmp(arg, "--test8") == 0) { g_test_mode = 8; continue; }
+        if (strcmp(arg, "--test9") == 0) { g_test_mode = 9; continue; }
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             printf("Usage: ./main [--log=verbose|summary|minimal] [--summary] [--quiet|-q]\n");
             printf("             [--perf]  (disable simulated sleeps for performance testing)\n");
@@ -785,6 +814,7 @@ static void apply_cli_options(int argc, char *argv[]) {
             printf("  --test6  Full ticket queue test (block SEM_TICKET_QUEUE_SLOTS)\n");
             printf("  --test7  Full boarding queue test (block SEM_BOARDING_QUEUE_SLOTS)\n");
             printf("  --test8  Combined stress test (both queues full)\n");
+            printf("  --test9  Full message queue test for ticket office 0\n");
             exit(0);
         }
     }
