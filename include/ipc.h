@@ -14,6 +14,7 @@ int ipc_get_shmid(void);
 
 int ipc_get_semid(void);
 int sem_lock(int sem_num);
+int sem_trylock(int sem_num);  /* Non-blocking; use when holder may be stopped (e.g. SIGSTOP) */
 void sem_unlock(int sem_num);
 int sem_getval(int sem_num);
 void sem_setval(int sem_num, int value);
