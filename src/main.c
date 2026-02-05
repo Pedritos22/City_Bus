@@ -752,22 +752,27 @@ static void run_test(int test_num) {
                    g_driver_pids[0]);
             kill(g_driver_pids[0], SIGSTOP);
 
-            /* Monitor boarding queue / waiting */
+            /* Monitor boarding queue / waiting. Use sem_trylock so we don't block if
+             * the stopped driver holds SEM_SHM_MUTEX (SIGSTOP freezes it mid-critical-section). */
             for (int i = 0; i < 10; i++) {
                 sleep_seconds(1);
                 if (shm) {
-                    sem_lock(SEM_SHM_MUTEX);
-                    int waiting = shm->passengers_waiting;
-                    int boarded = shm->boarded_people;
-                    int transported = shm->passengers_transported;
-                    int on_bus = 0;
-                    for (int j = 0; j < MAX_BUSES; j++) {
-                        on_bus += shm->buses[j].passenger_count;
+                    if (sem_trylock(SEM_SHM_MUTEX) == 0) {
+                        int waiting = shm->passengers_waiting;
+                        int boarded = shm->boarded_people;
+                        int transported = shm->passengers_transported;
+                        int on_bus = 0;
+                        for (int j = 0; j < MAX_BUSES; j++) {
+                            on_bus += shm->buses[j].passenger_count;
+                        }
+                        sem_unlock(SEM_SHM_MUTEX);
+                        int queue_sem = sem_getval(SEM_BOARDING_QUEUE_SLOTS);
+                        printf("[TEST 10] t=%2d: waiting=%d, boarded=%d, transported=%d, on_bus=%d, queue_sem=%d\n",
+                               i + 1, waiting, boarded, transported, on_bus, queue_sem);
+                    } else {
+                        printf("[TEST 10] t=%2d: (mutex busy - driver stopped?)\n", i + 1);
                     }
-                    sem_unlock(SEM_SHM_MUTEX);
-                    int queue_sem = sem_getval(SEM_BOARDING_QUEUE_SLOTS);
-                    printf("[TEST 10] t=%2d: waiting=%d, boarded=%d, transported=%d, on_bus=%d, queue_sem=%d\n",
-                           i + 1, waiting, boarded, transported, on_bus, queue_sem);
+                    fflush(stdout);
                 }
             }
 

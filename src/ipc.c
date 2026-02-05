@@ -357,6 +357,26 @@ int sem_lock(int sem_num) {
     }
 }
 
+/* Non-blocking lock: returns 0 on success, -1 if would block (EAGAIN) or error.
+ * Use in tests when another process (e.g. driver with SIGSTOP) may hold the mutex. */
+int sem_trylock(int sem_num) {
+    if (g_semid == -1) {
+        return -1;
+    }
+    struct sembuf op;
+    op.sem_num = sem_num;
+    op.sem_op = -1;
+    op.sem_flg = IPC_NOWAIT;
+    if (semop(g_semid, &op, 1) == 0) {
+        return 0;
+    }
+    if (errno == EAGAIN || errno == EINTR || errno == EIDRM || errno == EINVAL) {
+        return -1;
+    }
+    perror("sem_trylock: semop failed");
+    return -1;
+}
+
 void sem_unlock(int sem_num) {
     if (g_semid == -1) {
         return;  /* Semaphore set not initialized or already removed */
