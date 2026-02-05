@@ -196,7 +196,9 @@ static void wait_for_entrance_clear(shm_data_t *shm) {
         if (entering > 0) {
             log_driver(LOG_INFO, "Bus %d: Waiting for %d passengers to finish entering",
                       g_bus_id, entering);
-            //usleep(100000);
+            if (!log_is_perf_mode()) {
+                usleep(100000);
+            }
         }
     } while (entering > 0 && g_running);
 }
