@@ -417,7 +417,7 @@ $ ./main --test10
 ### 11. Test zapełnienia kolejki komunikatów dla ticket_office.
 [TEST11](https://github.com/Pedritos22/City_Bus/blob/b7b66fad757fb42d88ec8801dac4b05ed2f83c10/src/main.c#L814-L885)
 Test polega na podniesieniu semafora przy ticket_office i zalaniu kas biletowych klientami.\
-Następnie kasy otrzymują SIGSTO, a po pewnym czasie SIGCONT aby zaobserwować message queue drain.\
+Następnie kasy otrzymują SIGSTOP, a po pewnym czasie SIGCONT aby zaobserwować message queue drain.\
 Zalecane jest uzycie flagi --perf badz zmiana zmiennej burst na 400.
 
 ```console
