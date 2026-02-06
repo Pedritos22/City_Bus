@@ -414,7 +414,17 @@ Test polega na zatrzymaniu dzialania kierowcy poprzez SIGSTOP, obserwowaniu czy 
 $ ./main --test10
 ```
 
-### 11. Test obciązeniowy
+### 11. Test zapełnienia kolejki komunikatów dla ticket_office.
+[TEST11](https://github.com/Pedritos22/City_Bus/blob/b7b66fad757fb42d88ec8801dac4b05ed2f83c10/src/main.c#L814-L885)
+Test polega na podniesieniu semafora przy ticket_office i zalaniu kas biletowych klientami.\
+Następnie kasy otrzymują SIGSTO, a po pewnym czasie SIGCONT aby zaobserwować message queue drain.\
+Zalecane jest uzycie flagi --perf badz zmiana zmiennej burst na 400.
+
+```console
+$ ./main --test11
+```
+
+### 12. Test obciązeniowy
 Test polega na nieprzerwanym tworzeniu pasazerow do symulacji. Domyślnie jest to obserwowane przy uzyciu flagi --perf.
 
 ```console
