@@ -396,18 +396,18 @@ Test polega na zapchaniu obu kolejek poprzez ustawienie SEM_TICKET_QUEUE_SLOTS o
 $ ./main --test8
 ```
 
-### 9. Test zapełnienia kolejki komunikatów dla kasy biletowej.
+### 9. Test zatrzymania kasy biletowej poprzez SIGSTOP.
 [TEST9](https://github.com/Pedritos22/City_Bus/blob/569a31d87c055c1a0e351f820d232117f9631c62/src/main.c#L712-L740)
-Test polega na zatrzymaniu dzialania kasy biletowej poprzez SIGSTOP, zapełnieniu kolejki komunikatów, wysłania sygnału SIGCONT i zaobserwowaniu działania kasy.\
+Test polega na zatrzymaniu dzialania kasy biletowej poprzez SIGSTOP, obserwowaniu czy zapełni kolejki komunikatów, wysłania sygnału SIGCONT i zaobserwowaniu działania kasy.\
 [POLECANE WYMAGANIA](https://github.com/Pedritos22/City_Bus/blob/569a31d87c055c1a0e351f820d232117f9631c62/include/config.h#L11) W pliku config.h ustawić TICKET_OFFICES na 1
 
 ```console
 $ ./main --test9
 ```
 
-### 10. Test zapełnienia kolejki komunikatów dla kierowcy.
+### 10. Test zatrzymania kierowcy poprzez SIGSTOP.
 [TEST10](https://github.com/Pedritos22/City_Bus/blob/569a31d87c055c1a0e351f820d232117f9631c62/src/main.c#L742-L788)
-Test polega na zatrzymaniu dzialania kierowcy poprzez SIGSTOP, zapełnieniu kolejki komunikatów, wysłania sygnału SIGCONT i zaobserwowaniu działania kierowcy.\
+Test polega na zatrzymaniu dzialania kierowcy poprzez SIGSTOP, obserwowaniu czy zapełni kolejki komunikatów, wysłania sygnału SIGCONT i zaobserwowaniu działania kierowcy.\
 [POLECANE WYMAGANIA](https://github.com/Pedritos22/City_Bus/blob/569a31d87c055c1a0e351f820d232117f9631c62/include/config.h#L4) W pliku config.h ustawić MAX_BUSES na 1
 
 ```console
