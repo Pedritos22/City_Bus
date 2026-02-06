@@ -405,13 +405,20 @@ Test polega na zatrzymaniu dzialania kasy biletowej poprzez SIGSTOP, zapełnieni
 $ ./main --test9
 ```
 
-### 9. Test zapełnienia kolejki komunikatów dla kierowcy.
+### 10. Test zapełnienia kolejki komunikatów dla kierowcy.
 [TEST10](https://github.com/Pedritos22/City_Bus/blob/569a31d87c055c1a0e351f820d232117f9631c62/src/main.c#L742-L788)
 Test polega na zatrzymaniu dzialania kierowcy poprzez SIGSTOP, zapełnieniu kolejki komunikatów, wysłania sygnału SIGCONT i zaobserwowaniu działania kierowcy.\
 [POLECANE WYMAGANIA](https://github.com/Pedritos22/City_Bus/blob/569a31d87c055c1a0e351f820d232117f9631c62/include/config.h#L4) W pliku config.h ustawić MAX_BUSES na 1
 
 ```console
 $ ./main --test10
+```
+
+### 11. Test obciązeniowy
+Test polega na nieprzerwanym tworzeniu pasazerow do symulacji. Domyślnie jest to obserwowane przy uzyciu flagi --perf.
+
+```console
+$ ./main --perf
 ```
 
 ## Napotkane problemy
