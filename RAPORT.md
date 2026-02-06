@@ -11,7 +11,8 @@ $ mkdir build
 $ cd build
 $ cmake ..
 $ make
-$ ./main
+$ ./main (podstawowe funkcjonalnosci)
+$ ./main --log=minimal --perf (preferowane ustawienia, logi i tak trafiaja do plikow .log)
 ```
 ## Mozliwe opcje uruchomienia
 ```
@@ -258,8 +259,10 @@ Dyspozytor (dispatcher.c)
 - **`SEM_BOARDING_QUEUE_SLOTS`** - limit requestów boardingowych
 
 
-## Testy - sa one przeprowadzane w tym samym czasie co symulacja. 
-## Pozwala to sprawdzic czy symulacja sie zawiesza badz ma problem.
+## Testy
+Kazdy test na starcie tworzy 50 pasazerow badz max_p jezeli zostala uzyta flaga.\
+Test wchodzi w zycie w trakcie dzialania. Najczęściej czeka sie 10 sekund na obserwacje zjawisk.
+
 ### 1. Test zabijający jednego z aktywnych kierowców
 [TEST1](https://github.com/Pedritos22/City_Bus/blob/c2df74f59b310ee831d8d59c522343c93a60931d/src/main.c#L380-L398)
 Wywołanie tego testu następuje poprzez wysłanie sygnału SIGKILL do aktywnego kierowcy.
@@ -374,7 +377,11 @@ $ ./main --test5
 
 ### 6. Test pełnej kolejki biletowej
 [TEST6](https://github.com/Pedritos22/City_Bus/blob/e54f43eceab2ffe776e354152896518fcb72ef29/src/main.c#L480-L545)
-Test polega na zapchaniu całej kolejki do kasy biletowej poprzez ustawienie SEM_TICKET_QUEUE_SLOTS na 0.
+Test polega na zapchaniu całej kolejki do kasy biletowej poprzez ustawienie SEM_TICKET_QUEUE_SLOTS na 0.\
+Pozwala to sprawdzić ilość procesów które czekają na dworcu z podanymi statystykami.\
+[POLECANE WYMAGANIA w config.h]:
+- #define VIP_PERCENT 0
+- #define ADULT_WITH_CHILD_PERCENT 0
 
 ```console
 $ ./main --test6
@@ -382,7 +389,11 @@ $ ./main --test6
 
 ### 7. Test pełnej kolejki do busa.
 [TEST7](https://github.com/Pedritos22/City_Bus/blob/e54f43eceab2ffe776e354152896518fcb72ef29/src/main.c#L547-L616)
-Test polega na zapchaniu całej kolejki do busa poprzez ustawienie SEM_BOARDING_QUEUE_SLOTS na 0.
+Test polega na zapchaniu całej kolejki do busa poprzez ustawienie SEM_BOARDING_QUEUE_SLOTS na 0.\
+Pozwala to sprawdzić ilość procesów które czekają na dworcu z podanymi statystykami.\
+[POLECANE WYMAGANIA w config.h]:
+- #define VIP_PERCENT 0
+- #define ADULT_WITH_CHILD_PERCENT 0
 
 ```console
 $ ./main --test7
@@ -390,8 +401,8 @@ $ ./main --test7
 
 ### 8. Test pełnej kolejki biletowej oraz busa w tym samym momencie.
 [TEST8](https://github.com/Pedritos22/City_Bus/blob/e54f43eceab2ffe776e354152896518fcb72ef29/src/main.c#L618-L710)
-Test polega na zapchaniu obu kolejek poprzez ustawienie SEM_TICKET_QUEUE_SLOTS oraz SEM_BOARDING_QUEUE_SLOTS na 0.
-
+Test polega na zapchaniu obu kolejek poprzez ustawienie SEM_TICKET_QUEUE_SLOTS oraz SEM_BOARDING_QUEUE_SLOTS na 0.\
+Pozwala to sprawdzić ilość procesów które czekają na dworcu oraz przed kasami biletowymi z podanymi statystykami.
 ```console
 $ ./main --test8
 ```
@@ -405,6 +416,8 @@ Test polega na zatrzymaniu dzialania kasy biletowej poprzez SIGSTOP, obserwowani
 $ ./main --test9
 ```
 
+Spodziewamy sie braku problemów dzięki zastosowaniu semaforów przed kolejkami komunikatów - SEM_TICKET_QUEUE_SLOTS.
+
 ### 10. Test zatrzymania kierowcy poprzez SIGSTOP.
 [TEST10](https://github.com/Pedritos22/City_Bus/blob/569a31d87c055c1a0e351f820d232117f9631c62/src/main.c#L742-L788)
 Test polega na zatrzymaniu dzialania kierowcy poprzez SIGSTOP, obserwowaniu czy zapełni kolejki komunikatów, wysłania sygnału SIGCONT i zaobserwowaniu działania kierowcy.\
@@ -413,6 +426,7 @@ Test polega na zatrzymaniu dzialania kierowcy poprzez SIGSTOP, obserwowaniu czy 
 ```console
 $ ./main --test10
 ```
+Spodziewamy sie braku problemów dzięki zastosowaniu semaforów przed kolejkami komunikatów - SEM_BOARDING_QUEUE_SLOTS.
 
 ### 11. Test zapełnienia kolejki komunikatów dla ticket_office.
 [TEST11](https://github.com/Pedritos22/City_Bus/blob/b7b66fad757fb42d88ec8801dac4b05ed2f83c10/src/main.c#L814-L885)
@@ -669,6 +683,9 @@ FUNKCJA depart_bus(shm):
     
     Zaloguj powrót
 ```
+
+## Pytania
+W razie wystąpienia problemów mozna sie skontaktować z twórcą poprzez metody kontaktu wskazane w https://pedritos22.github.io/
 
 ## Temat 12 – Autobus Podmiejski
 Na dworcu stoi autobus o pojemności P pasażerów, w którym jednocześnie można przewieźć R
