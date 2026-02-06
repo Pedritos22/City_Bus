@@ -356,6 +356,24 @@ int main(int argc, char *argv[]) {
     
     while (g_running) {
         if (check_shutdown(shm)) {
+            /* Before shutting down, if this bus still has passengers on board or entering,
+             * perform one final departure so they are counted in passengers_transported. */
+            int passengers = 0;
+            int entering = 0;
+            int at_station = 0;
+            sem_lock(SEM_SHM_MUTEX);
+            passengers = shm->buses[g_bus_id].passenger_count;
+            entering = shm->buses[g_bus_id].entering_count;
+            at_station = shm->buses[g_bus_id].at_station;
+            sem_unlock(SEM_SHM_MUTEX);
+
+            if (at_station && (passengers > 0 || entering > 0)) {
+                log_driver(LOG_INFO,
+                           "Bus %d: Shutdown detected with %d passengers on/entering bus - performing final departure",
+                           g_bus_id, passengers + entering);
+                depart_bus(shm);
+            }
+
             log_driver(LOG_INFO, "Bus %d: Shutdown detected", g_bus_id);
             break;
         }

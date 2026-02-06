@@ -471,6 +471,23 @@ int main(void) {
     log_dispatcher(LOG_INFO, "Dispatcher shutting down...");
     if (sem_lock(SEM_SHM_MUTEX) == 0) {
         shm->simulation_running = false;
+        /* If any passengers are still recorded as being on buses, count them as
+         * transported before final statistics. This covers edge cases where a
+         * bus was mid-cycle when shutdown was triggered (e.g. perf mode). */
+        int on_bus_total = 0;
+        for (int i = 0; i < MAX_BUSES; i++) {
+            int on_bus = shm->buses[i].passenger_count;
+            if (on_bus > 0) {
+                shm->passengers_transported += on_bus;
+                on_bus_total += on_bus;
+                shm->buses[i].passenger_count = 0;
+            }
+        }
+        if (on_bus_total > 0) {
+            log_dispatcher(LOG_INFO,
+                           "Dispatcher: accounting %d passengers still on buses as transported at shutdown",
+                           on_bus_total);
+        }
         sem_unlock(SEM_SHM_MUTEX);
     }
     log_dispatcher(LOG_INFO, "Waiting for processes to exit gracefully...");

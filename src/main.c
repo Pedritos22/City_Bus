@@ -187,6 +187,43 @@ static int wait_for_ipc(int timeout_seconds) {
     return -1;
 }
 
+/* Common child-exit handling: update tracking arrays and print consistent logs. */
+static void handle_child_exit(pid_t pid) {
+    if (pid == g_dispatcher_pid) {
+        printf("[MAIN] Dispatcher terminated\n");
+        g_dispatcher_pid = 0;
+        return;
+    }
+
+    int found = 0;
+    for (int i = 0; i < TICKET_OFFICES; i++) {
+        if (pid == g_ticket_office_pids[i]) {
+            printf("[MAIN] Ticket office %d terminated\n", i);
+            g_ticket_office_pids[i] = 0;
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        for (int i = 0; i < MAX_BUSES; i++) {
+            if (pid == g_driver_pids[i]) {
+                printf("[MAIN] Driver %d terminated\n", i);
+                g_driver_pids[i] = 0;
+                found = 1;
+                break;
+            }
+        }
+    }
+    if (!found) {
+        for (int i = 0; i < g_passenger_count; i++) {
+            if (g_passenger_pids[i] == pid) {
+                g_passenger_pids[i] = g_passenger_pids[--g_passenger_count];
+                break;
+            }
+        }
+    }
+}
+
 static int reap_children(void) {
     int reaped = 0;
     int status;
@@ -194,39 +231,7 @@ static int reap_children(void) {
     
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         reaped++;
-        
-        if (pid == g_dispatcher_pid) {
-            printf("[MAIN] Dispatcher terminated\n");
-            g_dispatcher_pid = 0;
-        } else {
-            int found = 0;
-            for (int i = 0; i < TICKET_OFFICES; i++) {
-                if (pid == g_ticket_office_pids[i]) {
-                    printf("[MAIN] Ticket office %d terminated\n", i);
-                    g_ticket_office_pids[i] = 0;
-                    found = 1;
-                    break;
-                }
-            }
-            if (!found) {
-                for (int i = 0; i < MAX_BUSES; i++) {
-                    if (pid == g_driver_pids[i]) {
-                        printf("[MAIN] Driver %d terminated\n", i);
-                        g_driver_pids[i] = 0;
-                        found = 1;
-                        break;
-                    }
-                }
-            }
-            if (!found) {
-                for (int i = 0; i < g_passenger_count; i++) {
-                    if (g_passenger_pids[i] == pid) {
-                        g_passenger_pids[i] = g_passenger_pids[--g_passenger_count];
-                        break;
-                    }
-                }
-            }
-        }
+        handle_child_exit(pid);
     }
     
     return reaped;
@@ -310,14 +315,14 @@ static void terminate_children(void) {
     if (g_dispatcher_pid > 0) {
         kill(g_dispatcher_pid, SIGKILL);
     }
-    /* Reap all children in one loop*/
+    /* Reap all children in one loop, with consistent logging. */
     {
         int status;
         pid_t pid;
         while (1) {
             pid = waitpid(-1, &status, 0);
             if (pid > 0) {
-                if (pid == g_dispatcher_pid) g_dispatcher_pid = 0;
+                handle_child_exit(pid);
                 continue;
             }
             if (pid == -1 && errno == ECHILD) break;
@@ -337,6 +342,7 @@ static void wait_all_children(void) {
     printf("[MAIN] Waiting for all children to terminate...\n");
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         reaped_count++;
+        handle_child_exit(pid);
     }
     
     if (errno == ECHILD && reaped_count == 0) {
@@ -348,6 +354,7 @@ static void wait_all_children(void) {
         if (pid > 0) {
             /* Reaped a child, reset timeout */
             reaped_count++;
+            handle_child_exit(pid);
             elapsed = 0;
         } else if (pid == 0) {
             sleep(1);
