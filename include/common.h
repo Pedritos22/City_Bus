@@ -58,6 +58,7 @@ typedef struct {
     bool early_departure_flag;
     bool spawning_stopped;
     bool station_closed;
+    bool test_fill_queue;  /* When true, dispatcher won't end simulation (used by --test11) */
 
     int total_passengers_created;
     int passengers_transported;

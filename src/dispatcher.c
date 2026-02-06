@@ -104,6 +104,7 @@ static void init_shared_state(shm_data_t *shm) {
     shm->early_departure_flag = false;
     shm->spawning_stopped = false;
     shm->station_closed = false;
+    shm->test_fill_queue = false;
     
     shm->total_passengers_created = 0;
     shm->passengers_transported = 0;
@@ -319,7 +320,14 @@ static int check_simulation_end(shm_data_t *shm) {
     int waiting = shm->passengers_waiting;
     int in_office = shm->passengers_in_office;
     int buses_done = all_buses_at_station_and_empty(shm);
+    int test_fill_queue = shm->test_fill_queue;
     sem_unlock(SEM_SHM_MUTEX);
+
+    /* During the queue-fill test (--test11), we keep the dispatcher running so that
+     * ticket offices remain alive and can drain the queue after SIGCONT. */
+    if (test_fill_queue) {
+        return 0;
+    }
 
     if (done) return 1;
 

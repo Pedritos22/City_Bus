@@ -13,6 +13,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/msg.h>
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -386,6 +387,22 @@ static void sleep_seconds(int n) {
     while (time(NULL) < end) {
         sleep(1);  /* may return early on signal; we loop until wall clock reaches end */
     }
+}
+
+static void print_queue_stats(int msgid, const char *label) {
+    struct msqid_ds buf;
+    if (msgid < 0) {
+        printf("%s: msgid=<invalid>\n", label);
+        return;
+    }
+    if (msgctl(msgid, IPC_STAT, &buf) == -1) {
+        perror("msgctl IPC_STAT");
+        return;
+    }
+    printf("%s: qnum=%lu qbytes=%lu\n",
+           label,
+           (unsigned long)buf.msg_qnum,
+           (unsigned long)buf.msg_qbytes);
 }
 
 /* Run predefined test scenarios (does not modify normal shutdown logic) */
@@ -794,6 +811,79 @@ static void run_test(int test_num) {
         }
         break;
 
+    case 11: {
+        /* TEST 11: Fill the ticket message queue */
+        printf("\n[TEST 11] Filling System V TICKET message queue (kernel-level)...\n");
+        printf("[TEST 11] Steps: boost SEM_TICKET_QUEUE_SLOTS, SIGSTOP ticket offices, burst-spawn passengers, watch qnum, SIGCONT, watch drain\n\n");
+
+        /* Keep dispatcher alive during this test so it doesn't end simulation
+         * while we are observing queue behaviour. */
+        if (shm) {
+            sem_lock(SEM_SHM_MUTEX);
+            shm->test_fill_queue = true;
+            sem_unlock(SEM_SHM_MUTEX);
+        }
+
+        /* 1) Remove the SEM_TICKET_QUEUE_SLOTS cap so msgsnd can actually fill queue */
+        printf("[TEST 11] Setting SEM_TICKET_QUEUE_SLOTS to 32767 (bypass app-level cap)\n");
+        sem_setval(SEM_TICKET_QUEUE_SLOTS, 32767);
+
+        /* 2) Stop all ticket offices so nobody drains MSG_TICKET queue */
+        for (int i = 0; i < TICKET_OFFICES; i++) {
+            if (g_ticket_office_pids[i] > 0) {
+                printf("[TEST 11] SIGSTOP ticket office %d (PID %d)\n", i, g_ticket_office_pids[i]);
+                kill(g_ticket_office_pids[i], SIGSTOP);
+            }
+        }
+        sleep_seconds(1);
+
+        int msgid_ticket = ipc_get_msgid_ticket();
+        print_queue_stats(msgid_ticket, "[TEST 11] TicketQ (after SIGSTOP)");
+
+        /* 3) Burst spawn passengers. Many will eventually block in msgsnd() when queue is full. */
+        int burst = 5000;
+        printf("[TEST 11] Burst spawning %d passengers (no delay)\n", burst);
+        for (int i = 0; i < burst && g_running; i++) {
+            pid_t pid = spawn_passenger();
+            if (pid == -1) {
+                printf("[TEST 11] fork() failed after %d passengers in burst\n", i);
+                break;
+            }
+            track_passenger_pid(pid);
+        }
+
+        /* 4) Observe queue growth for 10 seconds */
+        printf("[TEST 11] Observing queue growth for 10 seconds...\n");
+        for (int t = 0; t < 10; t++) {
+            sleep_seconds(1);
+            print_queue_stats(msgid_ticket, "[TEST 11] TicketQ");
+            fflush(stdout);
+        }
+
+        /* 5) Resume ticket offices and observe drain */
+        printf("[TEST 11] SIGCONT all ticket offices; observing drain for 10 seconds...\n");
+        for (int i = 0; i < TICKET_OFFICES; i++) {
+            if (g_ticket_office_pids[i] > 0) {
+                kill(g_ticket_office_pids[i], SIGCONT);
+            }
+        }
+        for (int t = 0; t < 10; t++) {
+            sleep_seconds(1);
+            print_queue_stats(msgid_ticket, "[TEST 11] TicketQ");
+            fflush(stdout);
+        }
+
+        printf("[TEST 11] Done.\n");
+
+        /* Allow normal shutdown logic again. */
+        if (shm) {
+            sem_lock(SEM_SHM_MUTEX);
+            shm->test_fill_queue = false;
+            sem_unlock(SEM_SHM_MUTEX);
+        }
+        break;
+    }
+
     default:
         printf("[TEST] Unknown test number: %d\n", test_num);
     }
@@ -858,6 +948,7 @@ static void apply_cli_options(int argc, char *argv[]) {
         if (strcmp(arg, "--test8") == 0) { g_test_mode = 8; continue; }
         if (strcmp(arg, "--test9") == 0) { g_test_mode = 9; continue; }
         if (strcmp(arg, "--test10") == 0) { g_test_mode = 10; continue; }
+        if (strcmp(arg, "--test11") == 0) { g_test_mode = 11; continue; }
         if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             printf("Usage: ./main [--log=verbose|summary|minimal] [--summary] [--quiet|-q]\n");
             printf("             [--perf]  (disable simulated sleeps for performance testing)\n");
@@ -872,8 +963,9 @@ static void apply_cli_options(int argc, char *argv[]) {
             printf("  --test6  Full ticket queue test (block SEM_TICKET_QUEUE_SLOTS)\n");
             printf("  --test7  Full boarding queue test (block SEM_BOARDING_QUEUE_SLOTS)\n");
             printf("  --test8  Combined stress test (both queues full)\n");
-            printf("  --test9  Full message queue test for ticket office 0\n");
-            printf("  --test10  Full message queue test for driver 0\n");
+            printf("  --test9  SIGSTOP, SIGCONT for ticket office 0\n");
+            printf("  --test10  SIGSTOP, SIGCONT for driver 0\n");
+            printf("  --test11 Fill kernel MSG_TICKET queue by SIGSTOP ticket offices + burst spawn\n");
             exit(0);
         }
     }
